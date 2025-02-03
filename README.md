@@ -25,3 +25,28 @@ RustyCat is a modern Android logcat viewer written in Rust that makes debugging 
 
 ```bash
 cargo install rustycat
+```
+
+## Usage
+```bash
+rcat
+```
+
+Filter by package name:
+
+```bash
+rcat com.example.app
+```
+
+Filter with wildcard:
+
+```bash
+rcat "com.example.*"
+```
+
+
+
+## Acknowledgments
+Built with ❤️ using Rust
+
+Inspired by traditional logcat viewers like [pidcat](https://github.com/JakeWharton/pidcat)
