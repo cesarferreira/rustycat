@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "A colorful Android logcat viewer with package filtering"
 authors = ["Cesar Ferreira <cesar.manuel.ferreira@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/cesarferreira/rustycat"
+homepage = "https://github.com/cesarferreira/rustycat"
+readme = "README.md"
 
 [[bin]]
 name = "rcat"
