@@ -1,5 +1,5 @@
 [package]
-name = "rustycat"
+name = "rustycat-android"
 version = "0.1.0"
 edition = "2021"
 description = "A colorful Android logcat viewer with package filtering"
