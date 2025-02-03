@@ -10,8 +10,9 @@ use termion::event::Key;
 use termion::input::TermRead;
 
 const TAG_WIDTH: usize = 25;
-const LEFT_PADDING: usize = 15;
-const TOTAL_PREFIX_WIDTH: usize = LEFT_PADDING + TAG_WIDTH + 3; // +3 for level and spaces
+const LEFT_PADDING: usize = 2;
+const TIMESTAMP_WIDTH: usize = 12;  // Changed to fit "HH:MM:SS.mmm"
+const TOTAL_PREFIX_WIDTH: usize = LEFT_PADDING + TIMESTAMP_WIDTH + TAG_WIDTH + 3; // +3 for level and spaces
 
 thread_local! {
     static LAST_TAG: RefCell<String> = RefCell::new(String::new());
@@ -47,20 +48,7 @@ fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
     Ok(pids)
 }
 
-fn get_process_name(pid: &str) -> Option<String> {
-    let output = Command::new("adb")
-        .args(["shell", "ps", "-p", pid])
-        .output()
-        .ok()?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    output_str.lines()
-        .nth(1)
-        .and_then(|line| line.split_whitespace().last())
-        .map(String::from)
-}
-
-fn extract_log_parts(line: &str) -> Option<(String, String, String)> {
+fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 6 {
         return None;
@@ -69,6 +57,12 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String)> {
     // Standard logcat format:
     // Date Time PID TID Level Tag: Message
     // 02-03 15:44:41.704 2359 3654 I Tag: Message
+    
+    // Extract time with milliseconds (15:44:41.704)
+    let time_parts: Vec<&str> = parts[1].split('.').collect();
+    let time = time_parts[0];
+    let ms = time_parts.get(1).unwrap_or(&"000");
+    let timestamp = format!("{}.{}", time, &ms[..3]); // Ensure we only take 3 digits for milliseconds
     
     let level = parts[4];
     let tag_and_message = parts[5..].join(" ");
@@ -79,6 +73,7 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String)> {
     };
 
     Some((
+        timestamp,
         tag.trim().to_string(),
         level.to_string(),
         message.trim_start_matches(": ").to_string()
@@ -112,7 +107,7 @@ fn format_multiline_content(content: &str, color: Color) -> String {
 }
 
 fn format_log_line(line: &str) -> Option<String> {
-    if let Some((tag, level, content)) = extract_log_parts(line) {
+    if let Some((timestamp, tag, level, content)) = extract_log_parts(line) {
         let (level_str, color) = get_level_color(&level);
         let padding = " ".repeat(LEFT_PADDING);
         let formatted_content = format_multiline_content(&content, color);
@@ -131,12 +126,14 @@ fn format_log_line(line: &str) -> Option<String> {
             " ".repeat(tag.len()).bright_black()
         };
         
-        Some(format!("{}{:>width$} {} {}", 
+        Some(format!("{}{:<width$} {:>tagwidth$} {} {}", 
             padding,
+            timestamp.bright_black(),
             tag_display,
             format!(" {} ", level_str), // Add spacing around the level
             formatted_content,
-            width = TAG_WIDTH
+            width = TIMESTAMP_WIDTH,
+            tagwidth = TAG_WIDTH
         ))
     } else {
         Some(line.to_string())
