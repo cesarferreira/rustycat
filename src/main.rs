@@ -113,17 +113,17 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
 fn get_level_color(level: &str) -> (ColoredString, Color) {
     match level {
         // Debug: Light blue background with white text
-        "D" => (" D ".white().bold().on_bright_blue(), Color::BrightBlue),
+        "D" => (" D ".black().bold().on_bright_blue(), Color::BrightBlue),
         // Info: Green background with white text
-        "I" => (" I ".white().bold().on_bright_green(), Color::BrightGreen),
+        "I" => (" I ".black().bold().on_bright_green(), Color::BrightGreen),
         // Warning: Yellow/Orange background with black text
         "W" => (" W ".black().bold().on_yellow(), Color::Yellow),
         // Error: Red background with white text
-        "E" => (" E ".white().bold().on_bright_red(), Color::BrightRed),
+        "E" => (" E ".black().bold().on_bright_red(), Color::BrightRed),
         // Verbose: Blue background with white text
-        "V" => (" V ".white().bold().on_blue(), Color::Blue),
+        "V" => (" V ".black().bold().on_blue(), Color::Blue),
         // Fatal: Bright red background with white text
-        "F" => (" F ".white().bold().on_red(), Color::Red),
+        "F" => (" F ".black().bold().on_red(), Color::Red),
         _ => ("    ".normal(), Color::White),
     }
 }
