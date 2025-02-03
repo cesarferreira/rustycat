@@ -1,6 +1,6 @@
 [package]
 name = "rustycat-android"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A colorful Android logcat viewer with package filtering"
 authors = ["Cesar Ferreira <cesar.manuel.ferreira@gmail.com>"]

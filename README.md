@@ -29,7 +29,7 @@ RustyCat is a modern Android logcat viewer written in Rust that makes debugging 
 ## Installation
 
 ```bash
-cargo install rustycat
+cargo install rustycat-android
 ```
 
 ## Usage
