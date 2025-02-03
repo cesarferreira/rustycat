@@ -4,11 +4,13 @@ use colored::*;
 use regex::Regex;
 use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::process;
 use termion::event::Key;
 use termion::input::TermRead;
+
+const TAG_WIDTH: usize = 25;
+const LEFT_PADDING: usize = 15;
+const TOTAL_PREFIX_WIDTH: usize = LEFT_PADDING + TAG_WIDTH + 3; // +3 for level and spaces
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -80,27 +82,45 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String)> {
 
 fn get_level_color(level: &str) -> (ColoredString, Color) {
     match level {
-        "D" => ("D".on_bright_black(), Color::BrightBlack),
-        "I" => ("I".on_green(), Color::Green),
-        "W" => ("W".on_yellow(), Color::Yellow),
-        "E" => ("E".on_red(), Color::Red),
-        "V" => ("V".on_blue(), Color::Blue),
-        "F" => ("F".on_red().bold(), Color::BrightRed),
+        "D" => ("D".bold().on_bright_black(), Color::BrightBlack),
+        "I" => ("I".bold().on_green(), Color::Green),
+        "W" => ("W".bold().on_yellow(), Color::Yellow),
+        "E" => ("E".bold().on_red(), Color::Red),
+        "V" => ("V".bold().on_blue(), Color::Blue),
+        "F" => ("F".bold().on_red(), Color::BrightRed),
         _ => (" ".normal(), Color::White),
     }
 }
 
-fn format_log_line(line: &str) -> String {
+fn format_multiline_content(content: &str, color: Color) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() <= 1 {
+        return content.color(color).to_string();
+    }
+
+    let padding = " ".repeat(TOTAL_PREFIX_WIDTH);
+    let mut result = lines[0].color(color).to_string();
+    for line in &lines[1..] {
+        result.push_str(&format!("\n{}{}", padding, line.color(color)));
+    }
+    result
+}
+
+fn format_log_line(line: &str) -> Option<String> {
     if let Some((tag, level, content)) = extract_log_parts(line) {
         let (level_str, color) = get_level_color(&level);
+        let padding = " ".repeat(LEFT_PADDING);
+        let formatted_content = format_multiline_content(&content, color);
         
-        format!("{:<30} {} {}", 
+        Some(format!("{}{:>width$} {} {}", 
+            padding,
             tag.bright_black(),
-            level_str,
-            content.color(color)
-        )
+            format!(" {} ", level_str), // Add spacing around the level
+            formatted_content,
+            width = TAG_WIDTH
+        ))
     } else {
-        line.to_string()
+        Some(line.to_string())
     }
 }
 
@@ -151,7 +171,9 @@ fn main() -> Result<()> {
 
     for line in reader.lines() {
         if let Ok(line) = line {
-            println!("{}", format_log_line(&line));
+            if let Some(formatted) = format_log_line(&line) {
+                println!("{}", formatted);
+            }
         }
     }
 
