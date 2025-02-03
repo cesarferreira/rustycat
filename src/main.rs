@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
 use std::process;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use termion::event::Key;
 use termion::input::TermRead;
 
@@ -16,6 +17,35 @@ const TOTAL_PREFIX_WIDTH: usize = LEFT_PADDING + TIMESTAMP_WIDTH + TAG_WIDTH + 3
 
 thread_local! {
     static LAST_TAG: RefCell<String> = RefCell::new(String::new());
+    static TAG_COLORS: RefCell<HashMap<String, Color>> = RefCell::new(HashMap::new());
+}
+
+const TAG_COLORS_LIST: &[Color] = &[
+    Color::Red,
+    Color::Green,
+    Color::Yellow,
+    Color::Blue,
+    Color::Magenta,
+    Color::Cyan,
+    Color::BrightRed,
+    Color::BrightGreen,
+    Color::BrightYellow,
+    Color::BrightBlue,
+    Color::BrightMagenta,
+    Color::BrightCyan,
+];
+
+fn get_tag_color(tag: &str) -> Color {
+    TAG_COLORS.with(|colors| {
+        let mut colors = colors.borrow_mut();
+        if let Some(&color) = colors.get(tag) {
+            color
+        } else {
+            let color = TAG_COLORS_LIST[colors.len() % TAG_COLORS_LIST.len()];
+            colors.insert(tag.to_string(), color);
+            color
+        }
+    })
 }
 
 #[derive(Parser, Debug)]
@@ -126,10 +156,11 @@ fn format_log_line(line: &str) -> Option<String> {
             changed
         });
 
+        let tag_color = get_tag_color(&tag);
         let tag_display = if show_tag {
-            tag.bright_black()
+            tag.color(tag_color)
         } else {
-            " ".repeat(tag.len()).bright_black()
+            " ".repeat(tag.len()).color(tag_color)
         };
         
         Some(format!("{}{:<width$} {:>tagwidth$} {} {}", 
