@@ -5,12 +5,17 @@ use regex::Regex;
 use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
 use std::process;
+use std::cell::RefCell;
 use termion::event::Key;
 use termion::input::TermRead;
 
 const TAG_WIDTH: usize = 25;
 const LEFT_PADDING: usize = 15;
 const TOTAL_PREFIX_WIDTH: usize = LEFT_PADDING + TAG_WIDTH + 3; // +3 for level and spaces
+
+thread_local! {
+    static LAST_TAG: RefCell<String> = RefCell::new(String::new());
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -112,9 +117,23 @@ fn format_log_line(line: &str) -> Option<String> {
         let padding = " ".repeat(LEFT_PADDING);
         let formatted_content = format_multiline_content(&content, color);
         
+        // Check if tag has changed
+        let show_tag = LAST_TAG.with(|last_tag| {
+            let mut last = last_tag.borrow_mut();
+            let changed = *last != tag;
+            *last = tag.clone();
+            changed
+        });
+
+        let tag_display = if show_tag {
+            tag.bright_black()
+        } else {
+            " ".repeat(tag.len()).bright_black()
+        };
+        
         Some(format!("{}{:>width$} {} {}", 
             padding,
-            tag.bright_black(),
+            tag_display,
             format!(" {} ", level_str), // Add spacing around the level
             formatted_content,
             width = TAG_WIDTH
