@@ -1,12 +1,12 @@
 
 <div align="center">
   <h1>🦀 RustyCat</h1>
+  <img src="assets/ss.png" width="100%" alt="RustyCat Logo">
 
 ```bash
 rcat com.example.app.*
 ```
   
-  <img src="assets/ss.png" width="100%" alt="RustyCat Logo">
 </div>
 
 
