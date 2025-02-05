@@ -4,7 +4,7 @@
   <img src="assets/ss.png" width="100%" alt="RustyCat Logo">
 
 ```bash
-rcat com.example.app.*
+rcat "com.example.app.*"
 ```
   
 </div>
