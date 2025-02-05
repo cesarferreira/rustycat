@@ -49,6 +49,14 @@ Filter with wildcard:
 rcat "com.example.*"
 ```
 
+Hide timestamps:
+
+```bash
+rcat --no-timestamp
+# or
+rcat -t
+```
+
 
 
 ## Acknowledgments
