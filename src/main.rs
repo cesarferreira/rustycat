@@ -53,6 +53,10 @@ fn get_tag_color(tag: &str) -> Color {
 struct Args {
     /// Package name pattern to filter (e.g., com.example.app or com.example.*)
     package_pattern: Option<String>,
+
+    /// Disable timestamp display in the output
+    #[arg(short = 't', long, default_value_t = false)]
+    no_timestamp: bool,
 }
 
 fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
@@ -142,7 +146,7 @@ fn format_multiline_content(content: &str, color: Color) -> String {
     result
 }
 
-fn format_log_line(line: &str) -> Option<String> {
+fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
     if let Some((timestamp, tag, level, content)) = extract_log_parts(line) {
         let (level_str, color) = get_level_color(&level);
         let padding = " ".repeat(LEFT_PADDING);
@@ -158,19 +162,23 @@ fn format_log_line(line: &str) -> Option<String> {
 
         let tag_color = get_tag_color(&tag);
         let tag_display = if show_tag {
-            tag.color(tag_color)
+            format!("{:>width$}", tag.color(tag_color), width = TAG_WIDTH)
         } else {
-            " ".repeat(tag.len()).color(tag_color)
+            format!("{:>width$}", " ".repeat(tag.len()).color(tag_color), width = TAG_WIDTH)
         };
         
-        Some(format!("{}{:<width$} {:>tagwidth$} {} {}", 
+        let timestamp_part = if hide_timestamp {
+            "".to_string()
+        } else {
+            format!("{:<width$} ", timestamp.bright_black(), width = TIMESTAMP_WIDTH)
+        };
+        
+        Some(format!("{}{}{} {} {}", 
             padding,
-            timestamp.bright_black(),
+            timestamp_part,
             tag_display,
-            format!(" {} ", level_str), // Add spacing around the level
-            formatted_content,
-            width = TIMESTAMP_WIDTH,
-            tagwidth = TAG_WIDTH
+            level_str,
+            formatted_content
         ))
     } else {
         Some(line.to_string())
@@ -224,7 +232,7 @@ fn main() -> Result<()> {
 
     for line in reader.lines() {
         if let Ok(line) = line {
-            if let Some(formatted) = format_log_line(&line) {
+            if let Some(formatted) = format_log_line(&line, args.no_timestamp) {
                 println!("{}", formatted);
             }
         }
