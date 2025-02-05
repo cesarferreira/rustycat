@@ -133,9 +133,10 @@ fn get_level_color(level: &str) -> (ColoredString, Color) {
     }
 }
 
-fn format_multiline_content(content: &str, color: Color) -> String {
+fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -> String {
     // Calculate the message start padding (where the content should align)
-    let message_start_padding = LEFT_PADDING + TIMESTAMP_WIDTH + TAG_WIDTH + 4 + 2; // +4 for level, +2 for spaces
+    let timestamp_width = if hide_timestamp { 0 } else { TIMESTAMP_WIDTH };
+    let message_start_padding = LEFT_PADDING + timestamp_width + TAG_WIDTH + 4 + 2; // +4 for level, +2 for spaces
     let padding = " ".repeat(message_start_padding);
     
     // Get terminal width
@@ -184,7 +185,7 @@ fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
     if let Some((timestamp, tag, level, content)) = extract_log_parts(line) {
         let (level_str, color) = get_level_color(&level);
         let padding = " ".repeat(LEFT_PADDING);
-        let formatted_content = format_multiline_content(&content, color);
+        let formatted_content = format_multiline_content(&content, color, hide_timestamp);
         
         // Check if tag has changed
         let show_tag = LAST_TAG.with(|last_tag| {
