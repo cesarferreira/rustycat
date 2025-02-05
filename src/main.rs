@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use termion::event::Key;
 use termion::input::TermRead;
+use termion::terminal_size;
 
 const TAG_WIDTH: usize = 25;
 const LEFT_PADDING: usize = 2;
@@ -133,16 +134,49 @@ fn get_level_color(level: &str) -> (ColoredString, Color) {
 }
 
 fn format_multiline_content(content: &str, color: Color) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    if lines.len() <= 1 {
-        return content.color(color).to_string();
-    }
+    // Calculate the message start padding (where the content should align)
+    let message_start_padding = LEFT_PADDING + TIMESTAMP_WIDTH + TAG_WIDTH + 4 + 2; // +4 for level, +2 for spaces
+    let padding = " ".repeat(message_start_padding);
+    
+    // Get terminal width
+    let term_width = terminal_size().map(|(w, _)| w as usize).unwrap_or(80);
+    
+    let mut result = String::new();
+    let mut is_first_line = true;
 
-    let padding = " ".repeat(TOTAL_PREFIX_WIDTH);
-    let mut result = lines[0].color(color).to_string();
-    for line in &lines[1..] {
-        result.push_str(&format!("\n{}{}", padding, line.color(color)));
+    for line in content.lines() {
+        if !is_first_line {
+            result.push_str(&format!("\n{}", padding));
+        }
+        
+        // Available width for the message content
+        let available_width = term_width.saturating_sub(message_start_padding);
+        let mut remaining = line;
+        
+        while !remaining.is_empty() {
+            let (chunk, rest) = if remaining.len() > available_width {
+                // Try to break at the last space within the available width
+                let slice = &remaining[..available_width];
+                if let Some(last_space) = slice.rfind(' ') {
+                    remaining.split_at(last_space)
+                } else {
+                    // If no space found, break at available width
+                    remaining.split_at(available_width)
+                }
+            } else {
+                (remaining, "")
+            };
+            
+            if !is_first_line || !result.is_empty() {
+                result.push_str(&format!("\n{}", padding));
+            }
+            result.push_str(&chunk.color(color).to_string());
+            remaining = rest.trim_start();
+        }
+        
+        is_first_line = false;
     }
+    
     result
 }
 
