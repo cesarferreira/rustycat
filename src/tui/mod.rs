@@ -144,8 +144,8 @@ async fn run_disconnected_loop(
     color_manager: &mut ColorManager,
 ) -> Result<()> {
     let mut event_loop = {
-        use futures::StreamExt;
         use crossterm::event::EventStream;
+        use futures::StreamExt;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
 
@@ -232,9 +232,48 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal popup captures all keys when open
+    if app.show_app_popup {
+        handle_popup_key(app, key);
+        return;
+    }
+
     match app.input_mode {
         InputMode::Search => handle_search_key(app, key),
         InputMode::Normal => handle_normal_key(app, key),
+    }
+}
+
+fn handle_popup_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('p') => {
+            app.show_app_popup = false;
+        }
+        KeyCode::Char(' ') => {
+            app.toggle_app_selection();
+        }
+        KeyCode::Char('f') => {
+            app.toggle_app_favorite();
+            save_config(app);
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            if !app.active_apps.is_empty() {
+                app.app_popup_selected =
+                    (app.app_popup_selected + 1).min(app.active_apps.len() - 1);
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.app_popup_selected = app.app_popup_selected.saturating_sub(1);
+        }
+        KeyCode::Char('g') | KeyCode::Home => {
+            app.app_popup_selected = 0;
+        }
+        KeyCode::Char('G') | KeyCode::End => {
+            if !app.active_apps.is_empty() {
+                app.app_popup_selected = app.active_apps.len() - 1;
+            }
+        }
+        _ => {} // Modal: ignore everything else
     }
 }
 
@@ -285,10 +324,7 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Char('p') => {
-            app.show_app_picker = !app.show_app_picker;
-            if !app.show_app_picker && app.active_pane == Pane::AppPicker {
-                app.active_pane = Pane::LogView;
-            }
+            app.show_app_popup = true;
         }
         KeyCode::Char('c') => app.clear_logs(),
 
@@ -298,11 +334,6 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('g') | KeyCode::Home => handle_nav_top(app),
         KeyCode::Char('G') | KeyCode::End => handle_nav_bottom(app),
 
-        // App picker actions
-        KeyCode::Char(' ') => app.toggle_app_selection(),
-        KeyCode::Char('f') => {
-            app.toggle_app_favorite();
-        }
         KeyCode::Enter => handle_enter(app),
 
         // Level quick filters
@@ -326,12 +357,6 @@ fn handle_nav_down(app: &mut App) {
                 app.log_scroll = (app.log_scroll + 1).min(max);
             }
         }
-        Pane::AppPicker => {
-            if !app.active_apps.is_empty() {
-                app.app_picker_selected =
-                    (app.app_picker_selected + 1).min(app.active_apps.len() - 1);
-            }
-        }
         Pane::ErrorPane => {
             if !app.error_indices.is_empty() {
                 app.error_pane_selected =
@@ -347,9 +372,6 @@ fn handle_nav_up(app: &mut App) {
             app.auto_scroll = false;
             app.log_scroll = app.log_scroll.saturating_sub(1);
         }
-        Pane::AppPicker => {
-            app.app_picker_selected = app.app_picker_selected.saturating_sub(1);
-        }
         Pane::ErrorPane => {
             app.error_pane_selected = app.error_pane_selected.saturating_sub(1);
         }
@@ -362,9 +384,6 @@ fn handle_nav_top(app: &mut App) {
             app.auto_scroll = false;
             app.log_scroll = 0;
         }
-        Pane::AppPicker => {
-            app.app_picker_selected = 0;
-        }
         Pane::ErrorPane => {
             app.error_pane_selected = 0;
         }
@@ -375,11 +394,6 @@ fn handle_nav_bottom(app: &mut App) {
     match app.active_pane {
         Pane::LogView => {
             app.auto_scroll = true;
-        }
-        Pane::AppPicker => {
-            if !app.active_apps.is_empty() {
-                app.app_picker_selected = app.active_apps.len() - 1;
-            }
         }
         Pane::ErrorPane => {
             if !app.error_indices.is_empty() {

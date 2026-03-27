@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use crate::color::ColorManager;
 use crate::tui::app::{App, Pane};
-use crate::tui::widgets::app_picker::AppPicker;
+use crate::tui::widgets::app_popup::AppPopup;
 use crate::tui::widgets::error_pane::ErrorPane;
 use crate::tui::widgets::log_view::LogView;
 use crate::tui::widgets::status_bar::StatusBar;
@@ -23,7 +23,7 @@ pub fn draw(frame: &mut Frame, app: &App, color_manager: &mut ColorManager) {
     let content_area = main_chunks[0];
     let status_area = main_chunks[1];
 
-    // Content area split: [main area] [error pane (optional)]
+    // Content area split: [log view] [error pane (optional)]
     let content_chunks = if app.show_error_pane {
         Layout::default()
             .direction(Direction::Vertical)
@@ -36,31 +36,10 @@ pub fn draw(frame: &mut Frame, app: &App, color_manager: &mut ColorManager) {
             .split(content_area)
     };
 
-    let main_area = content_chunks[0];
+    let log_area = content_chunks[0];
     let error_area = content_chunks[1];
 
-    // Main area split: [app picker (optional)] [log view]
-    let log_area = if app.show_app_picker {
-        let h_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(28), Constraint::Min(1)])
-            .split(main_area);
-
-        // Render app picker
-        let picker = AppPicker {
-            apps: &app.active_apps,
-            selected: app.app_picker_selected,
-            offset: app.app_picker_offset,
-            focused: app.active_pane == Pane::AppPicker,
-        };
-        picker.render(h_chunks[0], frame.buffer_mut());
-
-        h_chunks[1]
-    } else {
-        main_area
-    };
-
-    // Render log view
+    // Render log view (always full width)
     let entries: Vec<_> = app
         .filtered_indices
         .iter()
@@ -98,7 +77,17 @@ pub fn draw(frame: &mut Frame, app: &App, color_manager: &mut ColorManager) {
     let status = StatusBar { app };
     status.render(status_area, frame.buffer_mut());
 
-    // Render help overlay
+    // Render app popup overlay
+    if app.show_app_popup {
+        let popup = AppPopup {
+            apps: &app.active_apps,
+            selected: app.app_popup_selected,
+            offset: app.app_popup_offset,
+        };
+        popup.render(size, frame.buffer_mut());
+    }
+
+    // Render help overlay (on top of everything)
     if app.show_help {
         render_help_overlay(frame, size);
     }
@@ -144,7 +133,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled(" p         ", Style::default().fg(Color::Yellow)),
-            Span::raw("  Toggle app picker"),
+            Span::raw("  Open app picker popup"),
         ]),
         Line::from(vec![
             Span::styled(" j/k ↑/↓   ", Style::default().fg(Color::Yellow)),
@@ -153,14 +142,6 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(vec![
             Span::styled(" g/G       ", Style::default().fg(Color::Yellow)),
             Span::raw("  Top / Bottom (resume scroll)"),
-        ]),
-        Line::from(vec![
-            Span::styled(" Space     ", Style::default().fg(Color::Yellow)),
-            Span::raw("  Toggle app selection"),
-        ]),
-        Line::from(vec![
-            Span::styled(" f         ", Style::default().fg(Color::Yellow)),
-            Span::raw("  Toggle favorite"),
         ]),
         Line::from(vec![
             Span::styled(" Enter     ", Style::default().fg(Color::Yellow)),
@@ -177,6 +158,21 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(vec![
             Span::styled(" 0         ", Style::default().fg(Color::Yellow)),
             Span::raw("  Clear level filter"),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            " App Popup (when open)",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled(" Space     ", Style::default().fg(Color::Yellow)),
+            Span::raw("  Toggle app selection"),
+        ]),
+        Line::from(vec![
+            Span::styled(" f         ", Style::default().fg(Color::Yellow)),
+            Span::raw("  Toggle favorite"),
         ]),
         Line::from(vec![
             Span::styled(" ?         ", Style::default().fg(Color::Yellow)),

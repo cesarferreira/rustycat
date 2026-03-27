@@ -7,7 +7,6 @@ const MAX_LOG_ENTRIES: usize = 50_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pane {
     LogView,
-    AppPicker,
     ErrorPane,
 }
 
@@ -45,16 +44,16 @@ pub struct App {
     pub log_scroll: usize,
     pub auto_scroll: bool,
 
-    // App picker scroll
-    pub app_picker_offset: usize,
-    pub app_picker_selected: usize,
+    // App popup scroll
+    pub app_popup_offset: usize,
+    pub app_popup_selected: usize,
 
     // Error pane scroll
     pub error_pane_offset: usize,
     pub error_pane_selected: usize,
 
     // Toggles
-    pub show_app_picker: bool,
+    pub show_app_popup: bool,
     pub show_error_pane: bool,
     pub show_help: bool,
 
@@ -81,11 +80,11 @@ impl App {
             search_input: String::new(),
             log_scroll: 0,
             auto_scroll: true,
-            app_picker_offset: 0,
-            app_picker_selected: 0,
+            app_popup_offset: 0,
+            app_popup_selected: 0,
             error_pane_offset: 0,
             error_pane_selected: 0,
-            show_app_picker: true,
+            show_app_popup: false,
             show_error_pane: true,
             show_help: false,
             favorites: Vec::new(),
@@ -203,15 +202,6 @@ impl App {
     pub fn cycle_pane_forward(&mut self) {
         self.active_pane = match self.active_pane {
             Pane::LogView => {
-                if self.show_app_picker {
-                    Pane::AppPicker
-                } else if self.show_error_pane {
-                    Pane::ErrorPane
-                } else {
-                    Pane::LogView
-                }
-            }
-            Pane::AppPicker => {
                 if self.show_error_pane {
                     Pane::ErrorPane
                 } else {
@@ -223,30 +213,13 @@ impl App {
     }
 
     pub fn cycle_pane_backward(&mut self) {
-        self.active_pane = match self.active_pane {
-            Pane::LogView => {
-                if self.show_error_pane {
-                    Pane::ErrorPane
-                } else if self.show_app_picker {
-                    Pane::AppPicker
-                } else {
-                    Pane::LogView
-                }
-            }
-            Pane::AppPicker => Pane::LogView,
-            Pane::ErrorPane => {
-                if self.show_app_picker {
-                    Pane::AppPicker
-                } else {
-                    Pane::LogView
-                }
-            }
-        };
+        // With only two panes, backward is the same as forward
+        self.cycle_pane_forward();
     }
 
     pub fn toggle_app_selection(&mut self) {
-        if self.active_pane == Pane::AppPicker && !self.active_apps.is_empty() {
-            let idx = self.app_picker_selected;
+        if !self.active_apps.is_empty() {
+            let idx = self.app_popup_selected;
             if idx < self.active_apps.len() {
                 self.active_apps[idx].selected = !self.active_apps[idx].selected;
                 self.refilter();
@@ -255,8 +228,8 @@ impl App {
     }
 
     pub fn toggle_app_favorite(&mut self) {
-        if self.active_pane == Pane::AppPicker && !self.active_apps.is_empty() {
-            let idx = self.app_picker_selected;
+        if !self.active_apps.is_empty() {
+            let idx = self.app_popup_selected;
             if idx < self.active_apps.len() {
                 self.active_apps[idx].favorite = !self.active_apps[idx].favorite;
                 let pkg = self.active_apps[idx].package.clone();
@@ -268,6 +241,10 @@ impl App {
                     self.favorites.retain(|f| f != &pkg);
                 }
                 self.sort_apps();
+                // Keep selection in bounds after re-sort
+                if self.app_popup_selected >= self.active_apps.len() {
+                    self.app_popup_selected = self.active_apps.len().saturating_sub(1);
+                }
             }
         }
     }
