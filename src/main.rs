@@ -58,6 +58,18 @@ struct Args {
     /// Disable timestamp display in the output
     #[arg(short = 't', long, default_value_t = false)]
     no_timestamp: bool,
+
+    /// Filter by log level (e.g., D,I,W,E,V,F)
+    #[arg(short = 'l', long)]
+    level: Option<String>,
+
+    /// Filter logs containing this text (case-insensitive)
+    #[arg(short = 'f', long)]
+    filter: Option<String>,
+
+    /// Exclude logs containing this text (case-insensitive)
+    #[arg(short = 'e', long)]
+    exclude: Option<String>,
 }
 
 fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
@@ -220,6 +232,35 @@ fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
     }
 }
 
+fn should_display_log(line: &str, args: &Args) -> bool {
+    if let Some((_, _, level, content)) = extract_log_parts(line) {
+        // Check log level filter
+        if let Some(level_filter) = &args.level {
+            if !level_filter.split(',').any(|l| l.trim() == level) {
+                return false;
+            }
+        }
+
+        // Check content filter
+        if let Some(filter) = &args.filter {
+            if !content.to_lowercase().contains(&filter.to_lowercase()) {
+                return false;
+            }
+        }
+
+        // Check content exclusion
+        if let Some(exclude) = &args.exclude {
+            if content.to_lowercase().contains(&exclude.to_lowercase()) {
+                return false;
+            }
+        }
+
+        true
+    } else {
+        true
+    }
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -244,8 +285,8 @@ fn main() -> Result<()> {
         .output()
         .context("Failed to clear logcat buffer")?;
 
-    if let Some(package_pattern) = args.package_pattern {
-        let pids = get_pids_for_package(&package_pattern)?;
+    if let Some(package_pattern) = args.package_pattern.as_ref() {
+        let pids = get_pids_for_package(package_pattern)?;
         
         if pids.is_empty() {
             println!("No matching processes found for pattern: {}", package_pattern);
@@ -267,8 +308,10 @@ fn main() -> Result<()> {
 
     for line in reader.lines() {
         if let Ok(line) = line {
-            if let Some(formatted) = format_log_line(&line, args.no_timestamp) {
-                println!("{}", formatted);
+            if should_display_log(&line, &args) {
+                if let Some(formatted) = format_log_line(&line, args.no_timestamp) {
+                    println!("{}", formatted);
+                }
             }
         }
     }

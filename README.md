@@ -20,6 +20,7 @@ RustyCat is a modern Android logcat viewer written in Rust that makes debugging 
 - 🏷️ Smart tag coloring with 12 distinct colors
 - ⏰ Precise timestamps with millisecond precision
 - 📱 Package filtering support (e.g., com.example.app or com.example.*)
+- 🔍 Advanced filtering options (by log level, content, and exclusions)
 - 📝 Intelligent tag display (shows tags only when they change)
 - 📊 Clean formatting with proper padding and alignment
 - 🔄 Multi-line log support with proper indentation
@@ -55,6 +56,24 @@ Hide timestamps:
 rcat --no-timestamp
 # or
 rcat -t
+```
+
+Filter by log level:
+```bash
+# Show only Debug and Error logs
+rcat -l "D,E"
+```
+
+Filter by content:
+```bash
+# Show only logs containing "network"
+rcat -f "network"
+
+# Exclude logs containing "verbose"
+rcat -e "verbose"
+
+# Combine filters
+rcat "com.example.app" -l "E,W" -f "network" -e "verbose"
 ```
 
 
