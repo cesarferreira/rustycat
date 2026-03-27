@@ -3,6 +3,7 @@ mod color;
 mod config;
 mod logcat;
 mod tui;
+mod web;
 
 use anyhow::Result;
 use clap::Parser;
@@ -33,10 +34,23 @@ struct Args {
     /// Exclude logs containing this text (case-insensitive)
     #[arg(short = 'e', long)]
     exclude: Option<String>,
+
+    /// Launch web UI mode (opens browser at localhost)
+    #[arg(long, default_value_t = false)]
+    web: bool,
+
+    /// Port for web UI (default: 3000)
+    #[arg(long, default_value_t = 3000)]
+    port: u16,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    if args.web {
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(web::run_web(args.port));
+    }
 
     let use_classic = args.classic
         || !std::io::stdout().is_terminal()

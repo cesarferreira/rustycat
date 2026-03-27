@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RustyCat Web</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;
+  --fg:#c9d1d9;--fg2:#8b949e;--fg3:#484f58;
+  --red:#f85149;--green:#3fb950;--yellow:#d29922;--blue:#58a6ff;
+  --magenta:#bc8cff;--cyan:#39d2c0;
+  --bright-red:#ff7b72;--bright-green:#7ee787;--bright-yellow:#e3b341;
+  --bright-blue:#79c0ff;--bright-magenta:#d2a8ff;--bright-cyan:#56d4dd;
+}
+html,body{height:100%;background:var(--bg);color:var(--fg);font-family:'JetBrains Mono','Fira Code','Cascadia Code','SF Mono',Consolas,'Liberation Mono',Menlo,monospace;font-size:13px;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100vh}
+
+/* Header */
+#header{display:flex;align-items:center;gap:12px;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+#header .title{font-weight:700;color:var(--green);font-size:14px;white-space:nowrap}
+#header .status{font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.status.connected{background:#1a3d2a;color:var(--green)}
+.status.disconnected{background:#3d1a1a;color:var(--red)}
+#search-box{flex:1;max-width:320px;margin-left:auto}
+#search-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--fg);font-family:inherit;font-size:12px;outline:none}
+#search-input:focus{border-color:var(--blue)}
+#search-input::placeholder{color:var(--fg3)}
+.filters{display:flex;gap:4px;flex-shrink:0}
+.level-btn{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--fg2);cursor:pointer;font-family:inherit;font-size:11px;transition:all .15s}
+.level-btn:hover{border-color:var(--fg2)}
+.level-btn.active{color:#fff;border-color:transparent}
+.level-btn[data-level="V"].active{background:var(--blue)}
+.level-btn[data-level="D"].active{background:var(--bright-blue)}
+.level-btn[data-level="I"].active{background:var(--green)}
+.level-btn[data-level="W"].active{background:var(--yellow);color:#000}
+.level-btn[data-level="E"].active{background:var(--bright-red)}
+.level-btn[data-level="All"].active{background:var(--fg3)}
+
+/* Log view */
+#log-container{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
+#log-view{padding:2px 0}
+.log-row{display:flex;gap:8px;padding:1px 12px;line-height:1.5;white-space:nowrap}
+.log-row:hover{background:var(--bg2)}
+.log-row .ts{color:var(--fg2);flex-shrink:0;width:100px}
+.log-row .tag{flex-shrink:0;width:160px;overflow:hidden;text-overflow:ellipsis}
+.log-row .lvl{flex-shrink:0;width:22px;text-align:center;font-weight:700;border-radius:2px;padding:0 2px}
+.log-row .pkg{color:var(--fg3);flex-shrink:0;width:180px;overflow:hidden;text-overflow:ellipsis}
+.log-row .msg{flex:1;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lvl-V{background:var(--blue);color:#000}
+.lvl-D{background:var(--bright-blue);color:#000}
+.lvl-I{background:var(--green);color:#000}
+.lvl-W{background:var(--yellow);color:#000}
+.lvl-E{background:var(--bright-red);color:#000}
+.lvl-F{background:var(--red);color:#fff}
+.row-V .msg,.row-V .ts{color:var(--blue)}
+.row-D .msg,.row-D .ts{color:var(--bright-blue)}
+.row-I .msg,.row-I .ts{color:var(--green)}
+.row-W .msg,.row-W .ts{color:var(--yellow)}
+.row-E .msg,.row-E .ts{color:var(--bright-red)}
+.row-F .msg,.row-F .ts{color:var(--red)}
+
+/* Error pane */
+#error-pane{border-top:1px solid var(--border);max-height:30vh;overflow-y:auto;flex-shrink:0;display:none}
+#error-pane.visible{display:block}
+#error-pane-header{display:flex;align-items:center;padding:4px 12px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:12px;color:var(--bright-red);font-weight:600;cursor:pointer;position:sticky;top:0;z-index:1}
+#error-list{padding:2px 0}
+
+/* Status bar */
+#statusbar{display:flex;align-items:center;gap:16px;padding:4px 12px;background:var(--bg2);border-top:1px solid var(--border);flex-shrink:0;font-size:11px;color:var(--fg2)}
+.shortcut{color:var(--fg3)}
+.shortcut b{color:var(--fg2);font-weight:600}
+#log-count{margin-left:auto;color:var(--fg3)}
+
+/* App popup modal */
+#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;justify-content:center;align-items:center}
+#overlay.visible{display:flex}
+#app-popup{background:var(--bg2);border:1px solid var(--border);border-radius:8px;width:420px;max-height:60vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+#popup-header{padding:10px 16px;border-bottom:1px solid var(--border);font-weight:600;color:var(--fg)}
+#popup-list{overflow-y:auto;flex:1;padding:4px 0}
+.popup-row{display:flex;align-items:center;gap:8px;padding:6px 16px;cursor:pointer;font-size:12px}
+.popup-row:hover,.popup-row.selected{background:var(--bg3)}
+.popup-row .check{width:18px;color:var(--green);text-align:center}
+.popup-row .pkg-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.popup-row .fav{width:18px;cursor:pointer;text-align:center;color:var(--yellow)}
+.popup-row .count{color:var(--fg3);font-size:11px}
+#popup-footer{padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--fg3);display:flex;gap:16px}
+
+/* Help modal */
+#help-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;justify-content:center;align-items:center}
+#help-overlay.visible{display:flex}
+#help-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px 28px;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+#help-box h2{color:var(--green);margin-bottom:12px;font-size:16px}
+.help-row{display:flex;gap:12px;padding:3px 0;font-size:12px}
+.help-row .key{color:var(--bright-blue);font-weight:600;min-width:60px}
+.help-row .desc{color:var(--fg2)}
+
+/* Disconnected overlay */
+#disconnected{display:none;position:absolute;inset:0;z-index:50;background:var(--bg);justify-content:center;align-items:center;flex-direction:column;gap:12px}
+#disconnected.visible{display:flex}
+#disconnected .icon{font-size:48px;color:var(--fg3)}
+#disconnected .msg-text{color:var(--fg2);font-size:14px}
+#disconnected .sub{color:var(--fg3);font-size:12px}
+
+/* Scroll indicator */
+#scroll-indicator{display:none;position:fixed;bottom:40px;right:20px;background:var(--blue);color:#000;padding:4px 12px;border-radius:12px;font-size:11px;font-weight:600;cursor:pointer;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+#scroll-indicator.visible{display:block}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <span class="title">RustyCat Web</span>
+    <span id="conn-status" class="status disconnected">disconnected</span>
+    <div id="search-box"><input id="search-input" type="text" placeholder="Search logs... ( / )"></div>
+    <div class="filters" id="filter-buttons"></div>
+  </div>
+
+  <div id="log-container"><div id="log-view"></div></div>
+
+  <div id="error-pane" class="visible">
+    <div id="error-pane-header">Errors (<span id="error-count">0</span>)</div>
+    <div id="error-list"></div>
+  </div>
+
+  <div id="statusbar">
+    <span id="statusbar-shortcuts"></span>
+    <span id="log-count">0 entries</span>
+  </div>
+
+  <div id="disconnected">
+    <div class="icon"></div>
+    <div class="msg-text">ADB Not Connected</div>
+    <div class="sub">Connect an Android device and refresh the page</div>
+  </div>
+
+  <div id="scroll-indicator">New logs</div>
+</div>
+
+<div id="overlay">
+  <div id="app-popup">
+    <div id="popup-header">Apps (<span id="app-count">0</span>)</div>
+    <div id="popup-list"></div>
+    <div id="popup-footer"></div>
+  </div>
+</div>
+
+<div id="help-overlay">
+  <div id="help-box">
+    <h2>Keyboard Shortcuts</h2>
+    <div id="help-content"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+// --- Constants ---
+var TAG_COLORS = [
+  '#f85149','#3fb950','#d29922','#58a6ff','#bc8cff','#39d2c0',
+  '#ff7b72','#7ee787','#e3b341','#79c0ff','#d2a8ff','#56d4dd'
+];
+var LEVEL_MAP = {Verbose:'V',Debug:'D',Info:'I',Warn:'W',Error:'E',Fatal:'F',Unknown:'?'};
+var LEVEL_RANK = {Verbose:0,Debug:1,Info:2,Warn:3,Error:4,Fatal:5,Unknown:0};
+var MAX_ENTRIES = 50000;
+var DOM_BUFFER = 2000;
+
+// --- State ---
+var allLogs = [];
+var filteredLogs = [];
+var errorLogs = [];
+var apps = {};
+var tagColorMap = {};
+var tagColorIdx = 0;
+var levelFilter = null;
+var searchText = '';
+var selectedApps = new Set();
+var favorites = new Set(JSON.parse(localStorage.getItem('rcat_favorites') || '[]'));
+var autoScroll = true;
+var popupOpen = false;
+var helpOpen = false;
+var popupSelected = 0;
+var errorPaneVisible = true;
+
+// --- DOM refs ---
+var $logContainer = document.getElementById('log-container');
+var $logView = document.getElementById('log-view');
+var $errorPane = document.getElementById('error-pane');
+var $errorList = document.getElementById('error-list');
+var $errorCount = document.getElementById('error-count');
+var $connStatus = document.getElementById('conn-status');
+var $searchInput = document.getElementById('search-input');
+var $logCount = document.getElementById('log-count');
+var $overlay = document.getElementById('overlay');
+var $popupList = document.getElementById('popup-list');
+var $appCount = document.getElementById('app-count');
+var $helpOverlay = document.getElementById('help-overlay');
+var $disconnected = document.getElementById('disconnected');
+var $scrollIndicator = document.getElementById('scroll-indicator');
+
+// --- Init static UI ---
+(function buildStaticUI() {
+  // Warning icon
+  document.querySelector('#disconnected .icon').textContent = '\u26A0';
+
+  // Scroll indicator arrow
+  $scrollIndicator.textContent = '\u2193 New logs';
+
+  // Filter buttons
+  var filterContainer = document.getElementById('filter-buttons');
+  var levels = [{label:'All',lvl:null,key:'All'},{label:'V',lvl:'Verbose',key:'V'},{label:'D',lvl:'Debug',key:'D'},{label:'I',lvl:'Info',key:'I'},{label:'W',lvl:'Warn',key:'W'},{label:'E',lvl:'Error',key:'E'}];
+  levels.forEach(function(l) {
+    var btn = document.createElement('button');
+    btn.className = 'level-btn' + (l.lvl === null ? ' active' : '');
+    btn.dataset.level = l.key;
+    btn.textContent = l.label;
+    btn.addEventListener('click', function() { setLevel(l.lvl); });
+    filterContainer.appendChild(btn);
+  });
+
+  // Statusbar shortcuts
+  var shortcuts = [
+    {key:'p',desc:'Apps'},{key:'/',desc:'Search'},{key:'e',desc:'Errors'},
+    {key:'c',desc:'Clear'},{key:'1-5',desc:'Level'},{key:'0',desc:'All'},{key:'?',desc:'Help'}
+  ];
+  var sbContainer = document.getElementById('statusbar-shortcuts');
+  shortcuts.forEach(function(s, i) {
+    if (i > 0) sbContainer.appendChild(document.createTextNode('  '));
+    var span = document.createElement('span');
+    span.className = 'shortcut';
+    var b = document.createElement('b');
+    b.textContent = s.key;
+    span.appendChild(b);
+    span.appendChild(document.createTextNode(':' + s.desc));
+    sbContainer.appendChild(span);
+  });
+
+  // Popup footer
+  var footerItems = [{key:'Space',desc:'Toggle'},{key:'f',desc:'Favorite'},{key:'Esc',desc:'Close'}];
+  var popupFooter = document.getElementById('popup-footer');
+  footerItems.forEach(function(item, i) {
+    if (i > 0) popupFooter.appendChild(document.createTextNode('  '));
+    var b = document.createElement('b');
+    b.textContent = item.key;
+    popupFooter.appendChild(b);
+    popupFooter.appendChild(document.createTextNode(':' + item.desc));
+  });
+
+  // Help content
+  var helpItems = [
+    {key:'p',desc:'Open app picker'},{key:'/',desc:'Focus search'},{key:'Esc',desc:'Close popup / clear search'},
+    {key:'e',desc:'Toggle error pane'},{key:'c',desc:'Clear all logs'},{key:'1-5',desc:'Filter level (V/D/I/W/E)'},
+    {key:'0',desc:'Show all levels'},{key:'?',desc:'Toggle this help'},{key:'G / End',desc:'Resume auto-scroll'}
+  ];
+  var helpContent = document.getElementById('help-content');
+  helpItems.forEach(function(item) {
+    var row = document.createElement('div');
+    row.className = 'help-row';
+    var keySpan = document.createElement('span');
+    keySpan.className = 'key';
+    keySpan.textContent = item.key;
+    var descSpan = document.createElement('span');
+    descSpan.className = 'desc';
+    descSpan.textContent = item.desc;
+    row.appendChild(keySpan);
+    row.appendChild(descSpan);
+    helpContent.appendChild(row);
+  });
+})();
+
+// --- Helpers ---
+function getTagColor(tag) {
+  if (!tagColorMap[tag]) {
+    tagColorMap[tag] = TAG_COLORS[tagColorIdx % TAG_COLORS.length];
+    tagColorIdx++;
+  }
+  return tagColorMap[tag];
+}
+
+function levelChar(level) { return LEVEL_MAP[level] || '?'; }
+
+function matchesFilter(entry) {
+  if (levelFilter && LEVEL_RANK[entry.level] < LEVEL_RANK[levelFilter]) return false;
+  if (selectedApps.size > 0 && (!entry.package || !selectedApps.has(entry.package))) return false;
+  if (searchText) {
+    var s = searchText.toLowerCase();
+    var hay = (entry.tag + ' ' + entry.message + ' ' + (entry.package || '')).toLowerCase();
+    if (hay.indexOf(s) === -1) return false;
+  }
+  return true;
+}
+
+function createLogRow(entry) {
+  var d = document.createElement('div');
+  var lc = levelChar(entry.level);
+  d.className = 'log-row row-' + lc;
+
+  var ts = document.createElement('span');
+  ts.className = 'ts';
+  ts.textContent = entry.timestamp;
+
+  var tag = document.createElement('span');
+  tag.className = 'tag';
+  tag.style.color = getTagColor(entry.tag);
+  tag.textContent = entry.tag;
+
+  var lvl = document.createElement('span');
+  lvl.className = 'lvl lvl-' + lc;
+  lvl.textContent = lc;
+
+  var pkg = document.createElement('span');
+  pkg.className = 'pkg';
+  pkg.textContent = entry.package || '';
+
+  var msg = document.createElement('span');
+  msg.className = 'msg';
+  msg.textContent = entry.message;
+
+  d.appendChild(ts);
+  d.appendChild(tag);
+  d.appendChild(lvl);
+  d.appendChild(pkg);
+  d.appendChild(msg);
+  return d;
+}
+
+// --- Rendering ---
+function refilter() {
+  filteredLogs = allLogs.filter(matchesFilter);
+  renderLogs();
+  updateErrorPane();
+  updateLogCount();
+}
+
+function renderLogs() {
+  var frag = document.createDocumentFragment();
+  var start = Math.max(0, filteredLogs.length - DOM_BUFFER);
+  for (var i = start; i < filteredLogs.length; i++) {
+    frag.appendChild(createLogRow(filteredLogs[i]));
+  }
+  while ($logView.firstChild) $logView.removeChild($logView.firstChild);
+  $logView.appendChild(frag);
+  if (autoScroll) scrollToBottom();
+}
+
+function appendLog(entry) {
+  if (!matchesFilter(entry)) return;
+  filteredLogs.push(entry);
+  while ($logView.childElementCount > DOM_BUFFER) {
+    $logView.removeChild($logView.firstChild);
+  }
+  $logView.appendChild(createLogRow(entry));
+  if (autoScroll) scrollToBottom();
+  updateLogCount();
+}
+
+function updateErrorPane() {
+  errorLogs = allLogs.filter(function(e) { return e.level === 'Error' || e.level === 'Fatal'; });
+  $errorCount.textContent = errorLogs.length;
+  var frag = document.createDocumentFragment();
+  var start = Math.max(0, errorLogs.length - 500);
+  for (var i = start; i < errorLogs.length; i++) {
+    frag.appendChild(createLogRow(errorLogs[i]));
+  }
+  while ($errorList.firstChild) $errorList.removeChild($errorList.firstChild);
+  $errorList.appendChild(frag);
+}
+
+function appendError(entry) {
+  errorLogs.push(entry);
+  $errorCount.textContent = errorLogs.length;
+  while ($errorList.childElementCount > 500) {
+    $errorList.removeChild($errorList.firstChild);
+  }
+  $errorList.appendChild(createLogRow(entry));
+}
+
+function updateLogCount() {
+  $logCount.textContent = filteredLogs.length + ' / ' + allLogs.length + ' entries';
+}
+
+function updateApp(entry) {
+  if (!entry.package) return;
+  var pkg = entry.package;
+  if (!apps[pkg]) {
+    apps[pkg] = {count:0, errors:0, selected:false, favorite:favorites.has(pkg)};
+  }
+  apps[pkg].count++;
+  if (entry.level === 'Error' || entry.level === 'Fatal') apps[pkg].errors++;
+}
+
+// --- Level filter ---
+function setLevel(level) {
+  levelFilter = level;
+  document.querySelectorAll('.level-btn').forEach(function(b) {
+    var dl = b.dataset.level;
+    var active = false;
+    if (level === null && dl === 'All') active = true;
+    else if (level === 'Verbose' && dl === 'V') active = true;
+    else if (level === 'Debug' && dl === 'D') active = true;
+    else if (level === 'Info' && dl === 'I') active = true;
+    else if (level === 'Warn' && dl === 'W') active = true;
+    else if (level === 'Error' && dl === 'E') active = true;
+    b.classList.toggle('active', active);
+  });
+  refilter();
+}
+
+// --- Scroll ---
+function scrollToBottom() {
+  autoScroll = true;
+  $logContainer.scrollTop = $logContainer.scrollHeight;
+  $scrollIndicator.classList.remove('visible');
+}
+
+$logContainer.addEventListener('scroll', function() {
+  var atBottom = $logContainer.scrollHeight - $logContainer.scrollTop - $logContainer.clientHeight < 50;
+  if (atBottom) {
+    autoScroll = true;
+    $scrollIndicator.classList.remove('visible');
+  } else {
+    if (autoScroll) $scrollIndicator.classList.add('visible');
+    autoScroll = false;
+  }
+});
+
+$scrollIndicator.addEventListener('click', scrollToBottom);
+
+// --- Search ---
+$searchInput.addEventListener('input', function() {
+  searchText = this.value;
+  refilter();
+});
+
+// --- App popup ---
+function getPopupPackages() {
+  return Object.keys(apps).sort(function(a, b) {
+    var af = favorites.has(a) ? 1 : 0;
+    var bf = favorites.has(b) ? 1 : 0;
+    if (af !== bf) return bf - af;
+    return a.localeCompare(b);
+  });
+}
+
+function renderPopup() {
+  var sorted = getPopupPackages();
+  $appCount.textContent = sorted.length;
+  while ($popupList.firstChild) $popupList.removeChild($popupList.firstChild);
+
+  sorted.forEach(function(pkg, i) {
+    var a = apps[pkg];
+    var row = document.createElement('div');
+    row.className = 'popup-row' + (i === popupSelected ? ' selected' : '');
+
+    var check = document.createElement('span');
+    check.className = 'check';
+    check.textContent = selectedApps.has(pkg) ? '\u2713' : '';
+
+    var pkgName = document.createElement('span');
+    pkgName.className = 'pkg-name';
+    pkgName.textContent = pkg;
+
+    var fav = document.createElement('span');
+    fav.className = 'fav';
+    fav.textContent = favorites.has(pkg) ? '\u2605' : '\u2606';
+    fav.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      popupSelected = i;
+      toggleFavorite(pkg);
+      renderPopup();
+    });
+
+    var count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = '(' + a.count + ')';
+
+    row.appendChild(check);
+    row.appendChild(pkgName);
+    row.appendChild(fav);
+    row.appendChild(count);
+
+    row.addEventListener('click', function() {
+      popupSelected = i;
+      toggleAppSelection(pkg);
+      renderPopup();
+    });
+
+    $popupList.appendChild(row);
+  });
+}
+
+function toggleAppSelection(pkg) {
+  if (selectedApps.has(pkg)) selectedApps.delete(pkg);
+  else selectedApps.add(pkg);
+  if (apps[pkg]) apps[pkg].selected = selectedApps.has(pkg);
+  refilter();
+}
+
+function toggleFavorite(pkg) {
+  if (favorites.has(pkg)) favorites.delete(pkg);
+  else favorites.add(pkg);
+  if (apps[pkg]) apps[pkg].favorite = favorites.has(pkg);
+  localStorage.setItem('rcat_favorites', JSON.stringify(Array.from(favorites)));
+}
+
+function openPopup() {
+  popupOpen = true;
+  popupSelected = 0;
+  renderPopup();
+  $overlay.classList.add('visible');
+}
+
+function closePopup() {
+  popupOpen = false;
+  $overlay.classList.remove('visible');
+}
+
+function ensurePopupVisible() {
+  var rows = $popupList.querySelectorAll('.popup-row');
+  if (rows[popupSelected]) rows[popupSelected].scrollIntoView({block:'nearest'});
+}
+
+// --- Help modal ---
+function openHelp() { helpOpen = true; $helpOverlay.classList.add('visible'); }
+function closeHelp() { helpOpen = false; $helpOverlay.classList.remove('visible'); }
+
+// --- Clear ---
+function clearLogs() {
+  allLogs = [];
+  filteredLogs = [];
+  errorLogs = [];
+  while ($logView.firstChild) $logView.removeChild($logView.firstChild);
+  while ($errorList.firstChild) $errorList.removeChild($errorList.firstChild);
+  $errorCount.textContent = '0';
+  Object.keys(apps).forEach(function(k) { apps[k].count = 0; apps[k].errors = 0; });
+  updateLogCount();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type:'clear'}));
+  }
+}
+
+// --- Keyboard shortcuts ---
+document.addEventListener('keydown', function(ev) {
+  if (document.activeElement === $searchInput) {
+    if (ev.key === 'Escape') {
+      $searchInput.value = '';
+      searchText = '';
+      $searchInput.blur();
+      refilter();
+      ev.preventDefault();
+    }
+    return;
+  }
+
+  if (helpOpen) {
+    if (ev.key === 'Escape' || ev.key === '?') { closeHelp(); ev.preventDefault(); }
+    return;
+  }
+
+  if (popupOpen) {
+    var pkgs = getPopupPackages();
+    switch (ev.key) {
+      case 'Escape': case 'p': closePopup(); break;
+      case ' ':
+        if (pkgs[popupSelected]) toggleAppSelection(pkgs[popupSelected]);
+        renderPopup();
+        ev.preventDefault();
+        break;
+      case 'f':
+        if (pkgs[popupSelected]) toggleFavorite(pkgs[popupSelected]);
+        renderPopup();
+        break;
+      case 'ArrowDown': case 'j':
+        popupSelected = Math.min(popupSelected + 1, pkgs.length - 1);
+        renderPopup();
+        ensurePopupVisible();
+        ev.preventDefault();
+        break;
+      case 'ArrowUp': case 'k':
+        popupSelected = Math.max(popupSelected - 1, 0);
+        renderPopup();
+        ensurePopupVisible();
+        ev.preventDefault();
+        break;
+    }
+    return;
+  }
+
+  switch (ev.key) {
+    case '/': $searchInput.focus(); ev.preventDefault(); break;
+    case 'p': openPopup(); break;
+    case 'e':
+      errorPaneVisible = !errorPaneVisible;
+      $errorPane.classList.toggle('visible', errorPaneVisible);
+      break;
+    case 'c': clearLogs(); break;
+    case '?': openHelp(); break;
+    case '1': setLevel('Verbose'); break;
+    case '2': setLevel('Debug'); break;
+    case '3': setLevel('Info'); break;
+    case '4': setLevel('Warn'); break;
+    case '5': setLevel('Error'); break;
+    case '0': setLevel(null); break;
+    case 'G': case 'End': scrollToBottom(); ev.preventDefault(); break;
+    case 'Escape':
+      if (searchText) {
+        $searchInput.value = '';
+        searchText = '';
+        refilter();
+      }
+      break;
+  }
+});
+
+// --- WebSocket ---
+var ws;
+var reconnectTimer;
+
+function connect() {
+  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+  ws.onopen = function() {};
+
+  ws.onmessage = function(ev) {
+    var data;
+    try { data = JSON.parse(ev.data); } catch(e) { return; }
+
+    if (data.type === 'status') {
+      if (data.adb_connected) {
+        $connStatus.textContent = 'connected';
+        $connStatus.className = 'status connected';
+        $disconnected.classList.remove('visible');
+      } else {
+        $connStatus.textContent = 'disconnected';
+        $connStatus.className = 'status disconnected';
+        $disconnected.classList.add('visible');
+      }
+      return;
+    }
+
+    if (data.type === 'log') {
+      if (allLogs.length >= MAX_ENTRIES) {
+        allLogs.shift();
+      }
+      allLogs.push(data);
+      updateApp(data);
+      appendLog(data);
+      if (data.level === 'Error' || data.level === 'Fatal') {
+        appendError(data);
+      }
+    }
+  };
+
+  ws.onclose = function() {
+    $connStatus.textContent = 'reconnecting...';
+    $connStatus.className = 'status disconnected';
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, 2000);
+  };
+
+  ws.onerror = function() {
+    ws.close();
+  };
+}
+
+connect();
+
+})();
+</script>
+</body>
+</html>
