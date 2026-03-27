@@ -72,6 +72,7 @@ pub fn draw(frame: &mut Frame, app: &App, color_manager: &mut ColorManager) {
         scroll: app.log_scroll,
         focused: app.active_pane == Pane::LogView,
         auto_scroll: app.auto_scroll,
+        adb_connected: app.adb_connected,
         color_manager,
     };
     log_view.render(log_area, frame.buffer_mut());

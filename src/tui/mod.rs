@@ -14,6 +14,7 @@ use ratatui::Terminal;
 use std::collections::HashMap;
 use std::io::stdout;
 use tokio::process::Command;
+use tokio::time::{timeout, Duration};
 
 use crate::color::ColorManager;
 use crate::config;
@@ -22,19 +23,26 @@ use app::{App, InputMode, Pane};
 use event::{Event, EventLoop};
 
 const BATCH_SIZE: usize = 100;
+const ADB_TIMEOUT: Duration = Duration::from_secs(3);
 
-pub async fn run_tui() -> Result<()> {
-    // Set up panic hook to restore terminal
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
+/// Guard that restores terminal state on drop (including panics and early returns)
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
         let _ = disable_raw_mode();
         let _ = stdout().execute(LeaveAlternateScreen);
-        original_hook(panic_info);
-    }));
+    }
+}
 
+pub async fn run_tui() -> Result<()> {
     // Initialize terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
+
+    // Guard ensures terminal is restored even on panic/error/?-propagation
+    let _guard = TerminalGuard;
+
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -47,26 +55,51 @@ pub async fn run_tui() -> Result<()> {
         app.last_selected = cfg.last_selected;
     }
 
-    // Clear logcat buffer
-    let _ = Command::new("adb")
-        .args(["logcat", "-c"])
-        .output()
-        .await;
+    // Check if adb is reachable with a quick timeout
+    let adb_available = match timeout(
+        ADB_TIMEOUT,
+        Command::new("adb").args(["devices"]).output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => {
+            let out = String::from_utf8_lossy(&output.stdout);
+            // "List of devices attached\n" + at least one device line
+            out.lines().count() > 1
+                && out.lines().skip(1).any(|l| !l.trim().is_empty())
+        }
+        _ => false,
+    };
+
+    if !adb_available {
+        app.adb_connected = false;
+        // Still run the TUI so user sees the message and can quit with q
+        run_disconnected_loop(&mut terminal, &mut app, &mut color_manager).await?;
+        save_config(&app);
+        return Ok(());
+    }
+
+    // Clear logcat buffer (with timeout so it doesn't hang)
+    let _ = timeout(
+        ADB_TIMEOUT,
+        Command::new("adb").args(["logcat", "-c"]).output(),
+    )
+    .await;
 
     // Spawn logcat process
     let mut logcat = Command::new("adb")
         .args(["logcat", "-v", "threadtime"])
         .stdout(std::process::Stdio::piped())
         .spawn()
-        .context("Failed to start adb logcat. Is adb installed and a device connected?")?;
+        .context("Failed to start adb logcat")?;
 
     let logcat_stdout = logcat
         .stdout
         .take()
         .context("Failed to capture logcat stdout")?;
 
-    // Get initial PID map
-    if let Ok(map) = get_pid_package_map_async().await {
+    // Get initial PID map (with timeout)
+    if let Ok(Ok(map)) = timeout(ADB_TIMEOUT, get_pid_package_map_async()).await {
         app.update_pid_map(map);
     }
 
@@ -75,7 +108,6 @@ pub async fn run_tui() -> Result<()> {
 
     // Main loop
     loop {
-        // Draw
         terminal.draw(|frame| {
             ui::draw(frame, &app, &mut color_manager);
         })?;
@@ -96,21 +128,70 @@ pub async fn run_tui() -> Result<()> {
         }
     }
 
-    // Save config before exit
-    let cfg = config::Config {
-        favorites: app.favorites.clone(),
-        last_selected: app.selected_packages(),
-    };
-    let _ = config::save_config(&cfg);
-
-    // Restore terminal
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
+    save_config(&app);
 
     // Kill logcat
     let _ = logcat.kill().await;
 
     Ok(())
+    // _guard drops here, restoring terminal
+}
+
+/// Minimal event loop when adb is not connected - just renders UI and handles quit keys
+async fn run_disconnected_loop(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    app: &mut App,
+    color_manager: &mut ColorManager,
+) -> Result<()> {
+    let mut event_loop = {
+        use futures::StreamExt;
+        use crossterm::event::EventStream;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+
+        let tx_key = tx.clone();
+        tokio::spawn(async move {
+            let mut reader = EventStream::new();
+            loop {
+                match reader.next().await {
+                    Some(Ok(crossterm::event::Event::Key(key))) => {
+                        if tx_key.send(Event::Key(key)).is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) | None => break,
+                }
+            }
+        });
+
+        rx
+    };
+
+    loop {
+        terminal.draw(|frame| {
+            ui::draw(frame, app, color_manager);
+        })?;
+
+        if let Some(Event::Key(key)) = event_loop.recv().await {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                break;
+            }
+            if key.code == KeyCode::Char('q') {
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn save_config(app: &App) {
+    let cfg = config::Config {
+        favorites: app.favorites.clone(),
+        last_selected: app.selected_packages(),
+    };
+    let _ = config::save_config(&cfg);
 }
 
 async fn process_event(app: &mut App, event: Event, pid_refresh_counter: &mut u32) {
@@ -128,7 +209,9 @@ async fn process_event(app: &mut App, event: Event, pid_refresh_counter: &mut u3
             // Refresh PID map every ~5 seconds (5000ms / 60ms tick = ~83 ticks)
             if *pid_refresh_counter >= 83 {
                 *pid_refresh_counter = 0;
-                if let Ok(map) = get_pid_package_map_async().await {
+                if let Ok(Ok(map)) =
+                    timeout(ADB_TIMEOUT, get_pid_package_map_async()).await
+                {
                     app.update_pid_map(map);
                 }
             }

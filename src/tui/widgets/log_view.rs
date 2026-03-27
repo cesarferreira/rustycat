@@ -11,6 +11,7 @@ pub struct LogView<'a> {
     pub scroll: usize,
     pub focused: bool,
     pub auto_scroll: bool,
+    pub adb_connected: bool,
     pub color_manager: &'a mut ColorManager,
 }
 
@@ -34,6 +35,58 @@ impl<'a> LogView<'a> {
 
         let visible_height = inner.height as usize;
         let total = self.entries.len();
+
+        if total == 0 {
+            let lines = if !self.adb_connected {
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  ADB disconnected",
+                        Style::default()
+                            .fg(Color::LightRed)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  No Android device found. Please:",
+                        Style::default().fg(Color::Gray),
+                    )),
+                    Line::from(Span::styled(
+                        "    1. Connect a device via USB or start an emulator",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::from(Span::styled(
+                        "    2. Run 'adb devices' to verify connection",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::from(Span::styled(
+                        "    3. Restart rcat",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Press q to quit",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ]
+            } else {
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Waiting for logs...",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Make sure an Android device is connected via adb.",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ]
+            };
+            let msg = Paragraph::new(lines);
+            msg.render(inner, buf);
+            return;
+        }
 
         let scroll = if self.auto_scroll {
             total.saturating_sub(visible_height)
