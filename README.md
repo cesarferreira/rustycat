@@ -6,7 +6,7 @@
 ```bash
 rcat "com.example.app.*"
 ```
-  
+
 </div>
 
 
@@ -62,6 +62,14 @@ Filter by log level:
 ```bash
 # Show only Debug and Error logs
 rcat -l "D,E"
+```
+
+Filter by tag:
+```bash
+# Show only logs from specific tag
+rcat --tag SystemUI
+# or
+rcat -g ActivityManager
 ```
 
 Filter by content:

@@ -110,6 +110,10 @@ struct Args {
     /// Exclude logs containing this text (case-insensitive)
     #[arg(short = 'e', long)]
     exclude: Option<String>,
+
+    /// Filter by tag name (exact match)
+    #[arg(short = 'g', long)]
+    tag: Option<String>,
 }
 
 fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
@@ -238,8 +242,15 @@ fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -
     result
 }
 
-fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
+fn format_log_line(line: &str, hide_timestamp: bool, tag_filter: &Option<String>) -> Option<String> {
     if let Some((timestamp, tag, level, content)) = extract_log_parts(line) {
+        // Apply tag filter if specified
+        if let Some(filter_tag) = tag_filter {
+            if &tag != filter_tag {
+                return None;
+            }
+        }
+
         let (level_str, color) = get_level_color(&level);
         let padding = " ".repeat(LEFT_PADDING);
         let formatted_content = format_multiline_content(&content, color, hide_timestamp);
@@ -278,7 +289,14 @@ fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
 }
 
 fn should_display_log(line: &str, args: &Args) -> bool {
-    if let Some((_, _, level, content)) = extract_log_parts(line) {
+    if let Some((_, tag, level, content)) = extract_log_parts(line) {
+        // Check tag filter
+        if let Some(tag_filter) = &args.tag {
+            if &tag != tag_filter {
+                return false;
+            }
+        }
+
         // Check log level filter
         if let Some(level_filter) = &args.level {
             if !level_filter.split(',').any(|l| l.trim() == level) {
@@ -345,7 +363,7 @@ fn main() -> Result<()> {
     for line in reader.lines() {
         if let Ok(line) = line {
             if should_display_log(&line, &args) {
-                if let Some(formatted) = format_log_line(&line, args.no_timestamp) {
+                if let Some(formatted) = format_log_line(&line, args.no_timestamp, &args.tag) {
                     println!("{}", formatted);
                 }
             }
