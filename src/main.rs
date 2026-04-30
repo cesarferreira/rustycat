@@ -207,14 +207,19 @@ fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -
         let mut remaining = line;
 
         while !remaining.is_empty() {
-            let (chunk, rest) = if remaining.len() > available_width {
-                // Try to break at the last space within the available width
-                let slice = &remaining[..available_width];
+            let (chunk, rest) = if remaining.chars().count() > available_width {
+                // Find the byte index at which `available_width` chars end
+                let cut = remaining
+                    .char_indices()
+                    .nth(available_width)
+                    .map(|(i, _)| i)
+                    .unwrap_or(remaining.len());
+                let slice = &remaining[..cut];
+                // Try to break at the last space within the slice
                 if let Some(last_space) = slice.rfind(' ') {
                     remaining.split_at(last_space)
                 } else {
-                    // If no space found, break at available width
-                    remaining.split_at(available_width)
+                    remaining.split_at(cut)
                 }
             } else {
                 (remaining, "")
