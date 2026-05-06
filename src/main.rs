@@ -7,9 +7,10 @@ use std::io::{BufRead, BufReader};
 use std::process;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use termion::event::Key;
+#[cfg(unix)]
 use termion::input::TermRead;
-use termion::terminal_size;
+#[cfg(unix)]
+use termion::event::Key;
 
 const TAG_WIDTH: usize = 25;
 const LEFT_PADDING: usize = 2;
@@ -35,6 +36,45 @@ const TAG_COLORS_LIST: &[Color] = &[
     Color::BrightMagenta,
     Color::BrightCyan,
 ];
+
+#[cfg(unix)]
+fn get_terminal_width() -> usize {
+    termion::terminal_size().map(|(w, _)| w as usize).unwrap_or(80)
+}
+
+#[cfg(windows)]
+fn get_terminal_width() -> usize {
+    crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80)
+}
+
+#[cfg(unix)]
+fn spawn_input_handler() {
+    std::thread::spawn(|| {
+        let stdin = std::io::stdin();
+        for key in stdin.keys() {
+            if let Ok(Key::Char('q')) | Ok(Key::Char('Q')) = key {
+                process::exit(0);
+            }
+        }
+    });
+}
+
+#[cfg(windows)]
+fn spawn_input_handler() {
+    std::thread::spawn(|| {
+        use crossterm::event::{self, Event, KeyCode};
+        loop {
+            if let Ok(Event::Key(key_event)) = event::read() {
+                match key_event.code {
+                    KeyCode::Char('q') | KeyCode::Char('Q') => {
+                        process::exit(0);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+}
 
 fn get_tag_color(tag: &str) -> Color {
     TAG_COLORS.with(|colors| {
@@ -70,6 +110,14 @@ struct Args {
     /// Exclude logs containing this text (case-insensitive)
     #[arg(short = 'e', long)]
     exclude: Option<String>,
+
+    /// Filter by tag name (exact match)
+    #[arg(short = 'g', long)]
+    tag: Option<String>,
+
+    /// Show PID in output
+    #[arg(short = 'p', long, default_value_t = false)]
+    show_pid: bool,
 }
 
 fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
@@ -95,7 +143,7 @@ fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
     Ok(pids)
 }
 
-fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
+fn extract_log_parts(line: &str) -> Option<(String, String, String, String, String)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 6 {
         return None;
@@ -104,13 +152,13 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
     // Standard logcat format:
     // Date Time PID TID Level Tag: Message
     // 02-03 15:44:41.704 2359 3654 I Tag: Message
-    
+
     // Extract time with milliseconds (15:44:41.704)
     let time_parts: Vec<&str> = parts[1].split('.').collect();
     let time = time_parts[0];
     let ms = time_parts.get(1).unwrap_or(&"000");
     let timestamp = format!("{}.{}", time, &ms[..3]); // Ensure we only take 3 digits for milliseconds
-    
+
     let level = parts[4];
     let tag_and_message = parts[5..].join(" ");
     let (tag, message) = if let Some(pos) = tag_and_message.find(": ") {
@@ -119,8 +167,11 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
         (tag_and_message.as_str(), "")
     };
 
+    let pid = parts[2].to_string();
+
     Some((
         timestamp,
+        pid,
         tag.trim().to_string(),
         level.to_string(),
         message.trim_start_matches(": ").to_string()
@@ -150,10 +201,10 @@ fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -
     let timestamp_width = if hide_timestamp { 0 } else { TIMESTAMP_WIDTH };
     let message_start_padding = LEFT_PADDING + timestamp_width + TAG_WIDTH + 4 + 2; // +4 for level, +2 for spaces
     let padding = " ".repeat(message_start_padding);
-    
+
     // Get terminal width
-    let term_width = terminal_size().map(|(w, _)| w as usize).unwrap_or(80);
-    
+    let term_width = get_terminal_width();
+
     let mut result = String::new();
     let mut is_first_line = true;
 
@@ -161,44 +212,56 @@ fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -
         if !is_first_line {
             result.push_str(&format!("\n{}", padding));
         }
-        
+
         // Available width for the message content
         let available_width = term_width.saturating_sub(message_start_padding);
         let mut remaining = line;
-        
+
         while !remaining.is_empty() {
-            let (chunk, rest) = if remaining.len() > available_width {
-                // Try to break at the last space within the available width
-                let slice = &remaining[..available_width];
+            let (chunk, rest) = if remaining.chars().count() > available_width {
+                // Find the byte index at which `available_width` chars end
+                let cut = remaining
+                    .char_indices()
+                    .nth(available_width)
+                    .map(|(i, _)| i)
+                    .unwrap_or(remaining.len());
+                let slice = &remaining[..cut];
+                // Try to break at the last space within the slice
                 if let Some(last_space) = slice.rfind(' ') {
                     remaining.split_at(last_space)
                 } else {
-                    // If no space found, break at available width
-                    remaining.split_at(available_width)
+                    remaining.split_at(cut)
                 }
             } else {
                 (remaining, "")
             };
-            
+
             if !is_first_line || !result.is_empty() {
                 result.push_str(&format!("\n{}", padding));
             }
             result.push_str(&chunk.color(color).to_string());
             remaining = rest.trim_start();
         }
-        
+
         is_first_line = false;
     }
-    
+
     result
 }
 
-fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
-    if let Some((timestamp, tag, level, content)) = extract_log_parts(line) {
+fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter: &Option<String>) -> Option<String> {
+    if let Some((timestamp, pid, tag, level, content)) = extract_log_parts(line) {
+        // Apply tag filter if specified
+        if let Some(filter_tag) = tag_filter {
+            if &tag != filter_tag {
+                return None;
+            }
+        }
+
         let (level_str, color) = get_level_color(&level);
         let padding = " ".repeat(LEFT_PADDING);
         let formatted_content = format_multiline_content(&content, color, hide_timestamp);
-        
+
         // Check if tag has changed
         let show_tag = LAST_TAG.with(|last_tag| {
             let mut last = last_tag.borrow_mut();
@@ -213,16 +276,23 @@ fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
         } else {
             format!("{:>width$}", " ".repeat(tag.len()).color(tag_color), width = TAG_WIDTH)
         };
-        
+
         let timestamp_part = if hide_timestamp {
             "".to_string()
         } else {
             format!("{:<width$} ", timestamp.bright_black(), width = TIMESTAMP_WIDTH)
         };
-        
-        Some(format!("{}{}{} {} {}", 
+
+        let pid_part = if show_pid {
+            format!("{} ", pid.bright_black())
+        } else {
+            "".to_string()
+        };
+
+        Some(format!("{}{}{}{} {} {}",
             padding,
             timestamp_part,
+            pid_part,
             tag_display,
             level_str,
             formatted_content
@@ -233,7 +303,14 @@ fn format_log_line(line: &str, hide_timestamp: bool) -> Option<String> {
 }
 
 fn should_display_log(line: &str, args: &Args) -> bool {
-    if let Some((_, _, level, content)) = extract_log_parts(line) {
+    if let Some((_, _, tag, level, content)) = extract_log_parts(line) {
+        // Check tag filter
+        if let Some(tag_filter) = &args.tag {
+            if &tag != tag_filter {
+                return false;
+            }
+        }
+
         // Check log level filter
         if let Some(level_filter) = &args.level {
             if !level_filter.split(',').any(|l| l.trim() == level) {
@@ -265,16 +342,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     // Set up input handling in a separate thread
-    std::thread::spawn(|| {
-        let stdin = std::io::stdin();
-        for key in stdin.keys() {
-            if let Ok(key) = key {
-                if matches!(key, Key::Char('q') | Key::Char('Q')) {
-                    process::exit(0);
-                }
-            }
-        }
-    });
+    spawn_input_handler();
 
     let mut logcat_cmd = Command::new("adb");
     logcat_cmd.args(["logcat", "-v", "threadtime"]);
@@ -285,19 +353,19 @@ fn main() -> Result<()> {
         .output()
         .context("Failed to clear logcat buffer")?;
 
-    if let Some(package_pattern) = args.package_pattern.as_ref() {
+    let pid_filter: Vec<String> = if let Some(package_pattern) = args.package_pattern.as_ref() {
         let pids = get_pids_for_package(package_pattern)?;
-        
+
         if pids.is_empty() {
             println!("No matching processes found for pattern: {}", package_pattern);
             return Ok(());
         }
 
-        // Add --pid argument for each found PID
-        for pid in pids {
-            logcat_cmd.arg("--pid").arg(pid);
-        }
-    }
+        println!("Monitoring PIDs: {}", pids.join(", "));
+        pids
+    } else {
+        Vec::new()
+    };
 
     let process = logcat_cmd
         .stdout(Stdio::piped())
@@ -308,8 +376,15 @@ fn main() -> Result<()> {
 
     for line in reader.lines() {
         if let Ok(line) = line {
+            // Filter by PID in Rust (adb logcat supports only one --pid)
+            if !pid_filter.is_empty() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 3 || !pid_filter.iter().any(|p| p == parts[2]) {
+                    continue;
+                }
+            }
             if should_display_log(&line, &args) {
-                if let Some(formatted) = format_log_line(&line, args.no_timestamp) {
+                if let Some(formatted) = format_log_line(&line, args.no_timestamp, args.show_pid, &args.tag) {
                     println!("{}", formatted);
                 }
             }
