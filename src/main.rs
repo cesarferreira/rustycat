@@ -114,6 +114,10 @@ struct Args {
     /// Filter by tag name (exact match)
     #[arg(short = 'g', long)]
     tag: Option<String>,
+
+    /// Show PID in output
+    #[arg(short = 'p', long, default_value_t = false)]
+    show_pid: bool,
 }
 
 fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
@@ -139,7 +143,7 @@ fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
     Ok(pids)
 }
 
-fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
+fn extract_log_parts(line: &str) -> Option<(String, String, String, String, String)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 6 {
         return None;
@@ -163,8 +167,11 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
         (tag_and_message.as_str(), "")
     };
 
+    let pid = parts[2].to_string();
+
     Some((
         timestamp,
+        pid,
         tag.trim().to_string(),
         level.to_string(),
         message.trim_start_matches(": ").to_string()
@@ -242,8 +249,8 @@ fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -
     result
 }
 
-fn format_log_line(line: &str, hide_timestamp: bool, tag_filter: &Option<String>) -> Option<String> {
-    if let Some((timestamp, tag, level, content)) = extract_log_parts(line) {
+fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter: &Option<String>) -> Option<String> {
+    if let Some((timestamp, pid, tag, level, content)) = extract_log_parts(line) {
         // Apply tag filter if specified
         if let Some(filter_tag) = tag_filter {
             if &tag != filter_tag {
@@ -276,9 +283,16 @@ fn format_log_line(line: &str, hide_timestamp: bool, tag_filter: &Option<String>
             format!("{:<width$} ", timestamp.bright_black(), width = TIMESTAMP_WIDTH)
         };
 
-        Some(format!("{}{}{} {} {}",
+        let pid_part = if show_pid {
+            format!("{} ", pid.bright_black())
+        } else {
+            "".to_string()
+        };
+
+        Some(format!("{}{}{}{} {} {}",
             padding,
             timestamp_part,
+            pid_part,
             tag_display,
             level_str,
             formatted_content
@@ -289,7 +303,7 @@ fn format_log_line(line: &str, hide_timestamp: bool, tag_filter: &Option<String>
 }
 
 fn should_display_log(line: &str, args: &Args) -> bool {
-    if let Some((_, tag, level, content)) = extract_log_parts(line) {
+    if let Some((_, _, tag, level, content)) = extract_log_parts(line) {
         // Check tag filter
         if let Some(tag_filter) = &args.tag {
             if &tag != tag_filter {
@@ -339,7 +353,7 @@ fn main() -> Result<()> {
         .output()
         .context("Failed to clear logcat buffer")?;
 
-    if let Some(package_pattern) = args.package_pattern.as_ref() {
+    let pid_filter: Vec<String> = if let Some(package_pattern) = args.package_pattern.as_ref() {
         let pids = get_pids_for_package(package_pattern)?;
 
         if pids.is_empty() {
@@ -347,11 +361,11 @@ fn main() -> Result<()> {
             return Ok(());
         }
 
-        // Add --pid argument for each found PID
-        for pid in pids {
-            logcat_cmd.arg("--pid").arg(pid);
-        }
-    }
+        println!("Monitoring PIDs: {}", pids.join(", "));
+        pids
+    } else {
+        Vec::new()
+    };
 
     let process = logcat_cmd
         .stdout(Stdio::piped())
@@ -362,8 +376,15 @@ fn main() -> Result<()> {
 
     for line in reader.lines() {
         if let Ok(line) = line {
+            // Filter by PID in Rust (adb logcat supports only one --pid)
+            if !pid_filter.is_empty() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 3 || !pid_filter.iter().any(|p| p == parts[2]) {
+                    continue;
+                }
+            }
             if should_display_log(&line, &args) {
-                if let Some(formatted) = format_log_line(&line, args.no_timestamp, &args.tag) {
+                if let Some(formatted) = format_log_line(&line, args.no_timestamp, args.show_pid, &args.tag) {
                     println!("{}", formatted);
                 }
             }
