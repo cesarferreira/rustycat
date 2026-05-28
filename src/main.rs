@@ -118,10 +118,33 @@ struct Args {
     /// Show PID in output
     #[arg(short = 'p', long, default_value_t = false)]
     show_pid: bool,
+
+    /// Target device serial number (use when multiple devices are connected)
+    #[arg(short = 'd', long)]
+    device: Option<String>,
 }
 
-fn build_pid_class_map() -> HashMap<String, String> {
-    let output = match Command::new("adb").args(["shell", "ps", "-A"]).output() {
+fn get_connected_devices() -> Vec<String> {
+    let output = match Command::new("adb").args(["devices"]).output() {
+        Ok(o) => o,
+        Err(_) => return vec![],
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 && parts[1] == "device" {
+                Some(parts[0].to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn build_pid_class_map(device: &str) -> HashMap<String, String> {
+    let output = match Command::new("adb").args(["-s", device, "shell", "ps", "-A"]).output() {
         Ok(o) => o,
         Err(_) => return HashMap::new(),
     };
@@ -332,12 +355,32 @@ fn main() -> Result<()> {
     // Set up input handling in a separate thread
     spawn_input_handler();
 
+    let device = if let Some(serial) = args.device.as_ref() {
+        serial.clone()
+    } else {
+        let devices = get_connected_devices();
+        match devices.len() {
+            0 => {
+                eprintln!("No devices connected.");
+                return Ok(());
+            }
+            1 => devices.into_iter().next().unwrap(),
+            _ => {
+                eprintln!("Multiple devices connected. Use -d to specify:");
+                for serial in &devices {
+                    eprintln!("  {}", serial);
+                }
+                return Ok(());
+            }
+        }
+    };
+
     let mut logcat_cmd = Command::new("adb");
-    logcat_cmd.args(["logcat", "-v", "threadtime"]);
+    logcat_cmd.args(["-s", &device, "logcat", "-v", "threadtime"]);
 
     // Clear the logcat buffer first
     Command::new("adb")
-        .args(["logcat", "-c"])
+        .args(["-s", &device, "logcat", "-c"])
         .output()
         .context("Failed to clear logcat buffer")?;
 
@@ -346,7 +389,7 @@ fn main() -> Result<()> {
             let regex_pattern = pattern.replace(".", "\\.").replace("*", ".*");
             let regex = Regex::new(&regex_pattern).context("Invalid class pattern")?;
             let map = loop {
-                let map = build_pid_class_map();
+                let map = build_pid_class_map(&device);
                 if map.values().any(|c| regex.is_match(c)) {
                     break map;
                 }
