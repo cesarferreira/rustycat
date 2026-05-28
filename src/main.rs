@@ -99,21 +99,21 @@ struct Args {
     #[arg(short = 't', long, default_value_t = false)]
     no_timestamp: bool,
 
-    /// Filter by log level (e.g., D,I,W,E,V,F)
-    #[arg(short = 'l', long)]
-    level: Option<String>,
+    /// Filter by log level (e.g., D,I,W,E,V,F) — repeatable: -l D -l I
+    #[arg(short = 'l', long, action = clap::ArgAction::Append)]
+    level: Vec<String>,
 
-    /// Filter logs containing this text (case-insensitive)
-    #[arg(short = 'f', long)]
-    filter: Option<String>,
+    /// Filter logs containing this text (case-insensitive) — repeatable: AND logic
+    #[arg(short = 'f', long, action = clap::ArgAction::Append)]
+    filter: Vec<String>,
 
-    /// Exclude logs containing this text (case-insensitive)
-    #[arg(short = 'e', long)]
-    exclude: Option<String>,
+    /// Exclude logs containing this text (case-insensitive) — repeatable: OR logic
+    #[arg(short = 'e', long, action = clap::ArgAction::Append)]
+    exclude: Vec<String>,
 
-    /// Filter by tag name (exact match)
-    #[arg(short = 'g', long)]
-    tag: Option<String>,
+    /// Filter by tag name (exact match) — repeatable: OR logic
+    #[arg(short = 'g', long, action = clap::ArgAction::Append)]
+    tag: Vec<String>,
 
     /// Show PID in output
     #[arg(short = 'p', long, default_value_t = false)]
@@ -249,13 +249,10 @@ fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -
     result
 }
 
-fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter: &Option<String>) -> Option<String> {
+fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter: &[String]) -> Option<String> {
     if let Some((timestamp, pid, tag, level, content)) = extract_log_parts(line) {
-        // Apply tag filter if specified
-        if let Some(filter_tag) = tag_filter {
-            if &tag != filter_tag {
-                return None;
-            }
+        if !tag_filter.is_empty() && !tag_filter.iter().any(|t| t == &tag) {
+            return None;
         }
 
         let (level_str, color) = get_level_color(&level);
@@ -304,30 +301,26 @@ fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter:
 
 fn should_display_log(line: &str, args: &Args) -> bool {
     if let Some((_, _, tag, level, content)) = extract_log_parts(line) {
-        // Check tag filter
-        if let Some(tag_filter) = &args.tag {
-            if &tag != tag_filter {
+        // Check tag filter (OR)
+        if !args.tag.is_empty() && !args.tag.iter().any(|t| t == &tag) {
+            return false;
+        }
+
+        // Check log level filter (OR, comma-separated values also supported)
+        if !args.level.is_empty() && !args.level.iter().any(|l| l.split(',').any(|s| s.trim() == level)) {
+            return false;
+        }
+
+        // Check content filter (AND: all must match)
+        for f in &args.filter {
+            if !content.to_lowercase().contains(&f.to_lowercase()) {
                 return false;
             }
         }
 
-        // Check log level filter
-        if let Some(level_filter) = &args.level {
-            if !level_filter.split(',').any(|l| l.trim() == level) {
-                return false;
-            }
-        }
-
-        // Check content filter
-        if let Some(filter) = &args.filter {
-            if !content.to_lowercase().contains(&filter.to_lowercase()) {
-                return false;
-            }
-        }
-
-        // Check content exclusion
-        if let Some(exclude) = &args.exclude {
-            if content.to_lowercase().contains(&exclude.to_lowercase()) {
+        // Check content exclusion (OR: any match excludes)
+        for e in &args.exclude {
+            if content.to_lowercase().contains(&e.to_lowercase()) {
                 return false;
             }
         }
@@ -384,7 +377,7 @@ fn main() -> Result<()> {
                 }
             }
             if should_display_log(&line, &args) {
-                if let Some(formatted) = format_log_line(&line, args.no_timestamp, args.show_pid, &args.tag) {
+                if let Some(formatted) = format_log_line(&line, args.no_timestamp, args.show_pid, &args.tag[..]) {
                     println!("{}", formatted);
                 }
             }
