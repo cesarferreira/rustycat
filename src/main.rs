@@ -15,7 +15,7 @@ use termion::event::Key;
 const TAG_WIDTH: usize = 25;
 const LEFT_PADDING: usize = 2;
 const TIMESTAMP_WIDTH: usize = 12;  // Changed to fit "HH:MM:SS.mmm"
-const TOTAL_PREFIX_WIDTH: usize = LEFT_PADDING + TIMESTAMP_WIDTH + TAG_WIDTH + 3; // +3 for level and spaces
+// const TOTAL_PREFIX_WIDTH: usize = LEFT_PADDING + TIMESTAMP_WIDTH + TAG_WIDTH + 3; // +3 for level and spaces
 
 thread_local! {
     static LAST_TAG: RefCell<String> = RefCell::new(String::new());
