@@ -92,8 +92,8 @@ fn get_tag_color(tag: &str) -> Color {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Package name pattern to filter (e.g., com.example.app or com.example.*)
-    package_pattern: Option<String>,
+    /// Class name pattern to filter by process name (e.g., com.example.app or com.example.*)
+    class_pattern: Option<String>,
 
     /// Disable timestamp display in the output
     #[arg(short = 't', long, default_value_t = false)]
@@ -120,27 +120,22 @@ struct Args {
     show_pid: bool,
 }
 
-fn get_pids_for_package(pattern: &str) -> Result<Vec<String>> {
-    let regex_pattern = pattern.replace(".", "\\.").replace("*", ".*");
-    let regex = Regex::new(&regex_pattern)?;
-
-    let output = Command::new("adb")
-        .args(["shell", "ps", "-A"])
-        .output()
-        .context("Failed to execute adb shell ps command")?;
-
+fn build_pid_class_map() -> HashMap<String, String> {
+    let output = match Command::new("adb").args(["shell", "ps", "-A"]).output() {
+        Ok(o) => o,
+        Err(_) => return HashMap::new(),
+    };
+    let mut map = HashMap::new();
     let processes = String::from_utf8_lossy(&output.stdout);
-    let mut pids = Vec::new();
-
     for line in processes.lines() {
-        if regex.is_match(line) {
-            if let Some(pid) = line.split_whitespace().nth(1) {
-                pids.push(pid.to_string());
-            }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let pid = parts[1].to_string();
+            let class_name = parts[parts.len() - 1].to_string();
+            map.insert(pid, class_name);
         }
     }
-
-    Ok(pids)
+    map
 }
 
 fn extract_log_parts(line: &str) -> Option<(String, String, String, String, String)> {
@@ -346,19 +341,21 @@ fn main() -> Result<()> {
         .output()
         .context("Failed to clear logcat buffer")?;
 
-    let pid_filter: Vec<String> = if let Some(package_pattern) = args.package_pattern.as_ref() {
-        let pids = get_pids_for_package(package_pattern)?;
-
-        if pids.is_empty() {
-            println!("No matching processes found for pattern: {}", package_pattern);
-            return Ok(());
-        }
-
-        println!("Monitoring PIDs: {}", pids.join(", "));
-        pids
-    } else {
-        Vec::new()
-    };
+    let (class_regex, pid_class_map): (Option<Regex>, HashMap<String, String>) =
+        if let Some(pattern) = args.class_pattern.as_ref() {
+            let regex_pattern = pattern.replace(".", "\\.").replace("*", ".*");
+            let regex = Regex::new(&regex_pattern).context("Invalid class pattern")?;
+            let map = loop {
+                let map = build_pid_class_map();
+                if map.values().any(|c| regex.is_match(c)) {
+                    break map;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            };
+            (Some(regex), map)
+        } else {
+            (None, HashMap::new())
+        };
 
     let process = logcat_cmd
         .stdout(Stdio::piped())
@@ -369,11 +366,16 @@ fn main() -> Result<()> {
 
     for line in reader.lines() {
         if let Ok(line) = line {
-            // Filter by PID in Rust (adb logcat supports only one --pid)
-            if !pid_filter.is_empty() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() < 3 || !pid_filter.iter().any(|p| p == parts[2]) {
-                    continue;
+            if let Some(regex) = &class_regex {
+                if !line.starts_with("--------- beginning of") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() < 3 {
+                        continue;
+                    }
+                    match pid_class_map.get(parts[2]) {
+                        Some(class_name) if regex.is_match(class_name) => {}
+                        _ => continue,
+                    }
                 }
             }
             if should_display_log(&line, &args) {
