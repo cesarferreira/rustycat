@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use colored::*;
-use regex::Regex;
 use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
 use std::process;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 #[cfg(unix)]
 use termion::input::TermRead;
 #[cfg(unix)]
@@ -92,7 +92,7 @@ fn get_tag_color(tag: &str) -> Color {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Class name pattern to filter by process name (e.g., com.example.app or com.example.*)
+    /// Class name pattern to filter by tag (e.g., com.example.app or com.example.*)
     class_pattern: Option<String>,
 
     /// Disable timestamp display in the output
@@ -114,10 +114,6 @@ struct Args {
     /// Filter by tag name (exact match) — repeatable: OR logic
     #[arg(short = 'g', long, action = clap::ArgAction::Append)]
     tag: Vec<String>,
-
-    /// Show PID in output
-    #[arg(short = 'p', long, default_value_t = false)]
-    show_pid: bool,
 
     /// Target device serial number (use when multiple devices are connected)
     #[arg(short = 'd', long)]
@@ -143,25 +139,7 @@ fn get_connected_devices() -> Vec<String> {
         .collect()
 }
 
-fn build_pid_class_map(device: &str) -> HashMap<String, String> {
-    let output = match Command::new("adb").args(["-s", device, "shell", "ps", "-A"]).output() {
-        Ok(o) => o,
-        Err(_) => return HashMap::new(),
-    };
-    let mut map = HashMap::new();
-    let processes = String::from_utf8_lossy(&output.stdout);
-    for line in processes.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            let pid = parts[1].to_string();
-            let class_name = parts[parts.len() - 1].to_string();
-            map.insert(pid, class_name);
-        }
-    }
-    map
-}
-
-fn extract_log_parts(line: &str) -> Option<(String, String, String, String, String)> {
+fn extract_log_parts(line: &str) -> Option<(String, String, String, String)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 6 {
         return None;
@@ -185,11 +163,8 @@ fn extract_log_parts(line: &str) -> Option<(String, String, String, String, Stri
         (tag_and_message.as_str(), "")
     };
 
-    let pid = parts[2].to_string();
-
     Some((
         timestamp,
-        pid,
         tag.trim().to_string(),
         level.to_string(),
         message.trim_start_matches(": ").to_string()
@@ -267,8 +242,8 @@ fn format_multiline_content(content: &str, color: Color, hide_timestamp: bool) -
     result
 }
 
-fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter: &[String]) -> Option<String> {
-    if let Some((timestamp, pid, tag, level, content)) = extract_log_parts(line) {
+fn format_log_line(line: &str, hide_timestamp: bool, tag_filter: &[String]) -> Option<String> {
+    if let Some((timestamp, tag, level, content)) = extract_log_parts(line) {
         if !tag_filter.is_empty() && !tag_filter.iter().any(|t| t == &tag) {
             return None;
         }
@@ -277,7 +252,6 @@ fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter:
         let padding = " ".repeat(LEFT_PADDING);
         let formatted_content = format_multiline_content(&content, color, hide_timestamp);
 
-        // Check if tag has changed
         let show_tag = LAST_TAG.with(|last_tag| {
             let mut last = last_tag.borrow_mut();
             let changed = *last != tag;
@@ -298,16 +272,9 @@ fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter:
             format!("{:<width$} ", timestamp.bright_black(), width = TIMESTAMP_WIDTH)
         };
 
-        let pid_part = if show_pid {
-            format!("{} ", pid.bright_black())
-        } else {
-            "".to_string()
-        };
-
-        Some(format!("{}{}{}{} {} {}",
+        Some(format!("{}{}{} {} {}",
             padding,
             timestamp_part,
-            pid_part,
             tag_display,
             level_str,
             formatted_content
@@ -317,8 +284,22 @@ fn format_log_line(line: &str, hide_timestamp: bool, show_pid: bool, tag_filter:
     }
 }
 
-fn should_display_log(line: &str, args: &Args) -> bool {
-    if let Some((_, _, tag, level, content)) = extract_log_parts(line) {
+fn should_display_log(line: &str, args: &Args, pids: Option<&Arc<Mutex<Vec<String>>>>) -> bool {
+    if let Some((_, tag, level, content)) = extract_log_parts(line) {
+        // Check PID filter
+        if let Some(pids) = pids {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let line_pid = parts[2];
+                let pids = pids.lock().unwrap();
+                if !pids.iter().any(|p| p == line_pid) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
         // Check tag filter (OR)
         if !args.tag.is_empty() && !args.tag.iter().any(|t| t == &tag) {
             return false;
@@ -384,21 +365,29 @@ fn main() -> Result<()> {
         .output()
         .context("Failed to clear logcat buffer")?;
 
-    let (class_regex, pid_class_map): (Option<Regex>, HashMap<String, String>) =
-        if let Some(pattern) = args.class_pattern.as_ref() {
-            let regex_pattern = pattern.replace(".", "\\.").replace("*", ".*");
-            let regex = Regex::new(&regex_pattern).context("Invalid class pattern")?;
-            let map = loop {
-                let map = build_pid_class_map(&device);
-                if map.values().any(|c| regex.is_match(c)) {
-                    break map;
+    let pids: Option<Arc<Mutex<Vec<String>>>> = if let Some(package) = args.class_pattern.clone() {
+        let pids = Arc::new(Mutex::new(Vec::<String>::new()));
+        let pids_clone = pids.clone();
+        let device_clone = device.clone();
+        std::thread::spawn(move || {
+            loop {
+                let output = Command::new("adb")
+                    .args(["-s", &device_clone, "shell", "pidof", &package])
+                    .output();
+                if let Ok(output) = output {
+                    let new_pids: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                        .split_whitespace()
+                        .map(|s| s.to_string())
+                        .collect();
+                    *pids_clone.lock().unwrap() = new_pids;
                 }
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            };
-            (Some(regex), map)
-        } else {
-            (None, HashMap::new())
-        };
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
+        Some(pids)
+    } else {
+        None
+    };
 
     let process = logcat_cmd
         .stdout(Stdio::piped())
@@ -409,20 +398,8 @@ fn main() -> Result<()> {
 
     for line in reader.lines() {
         if let Ok(line) = line {
-            if let Some(regex) = &class_regex {
-                if !line.starts_with("--------- beginning of") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() < 3 {
-                        continue;
-                    }
-                    match pid_class_map.get(parts[2]) {
-                        Some(class_name) if regex.is_match(class_name) => {}
-                        _ => continue,
-                    }
-                }
-            }
-            if should_display_log(&line, &args) {
-                if let Some(formatted) = format_log_line(&line, args.no_timestamp, args.show_pid, &args.tag[..]) {
+            if should_display_log(&line, &args, pids.as_ref()) {
+                if let Some(formatted) = format_log_line(&line, args.no_timestamp, &args.tag[..]) {
                     println!("{}", formatted);
                 }
             }
