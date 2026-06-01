@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use colored::*;
+use regex::Regex;
 use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
 use std::process;
@@ -92,7 +93,7 @@ fn get_tag_color(tag: &str) -> Color {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Class name pattern to filter by tag (e.g., com.example.app or com.example.*)
+    /// Class name regex to filter by process name (e.g., com.example.app, com.example.*, or .*)
     class_pattern: Option<String>,
 
     /// Disable timestamp display in the output
@@ -132,6 +133,25 @@ fn get_connected_devices() -> Vec<String> {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 && parts[1] == "device" {
                 Some(parts[0].to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn get_matching_pids(device: &str, regex: &Regex) -> Vec<String> {
+    let output = match Command::new("adb").args(["-s", device, "shell", "ps", "-A"]).output() {
+        Ok(o) => o,
+        Err(_) => return vec![],
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .skip(1) // skip the header row (USER PID ... NAME)
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 && regex.is_match(parts[parts.len() - 1]) {
+                Some(parts[1].to_string())
             } else {
                 None
             }
@@ -365,22 +385,15 @@ fn main() -> Result<()> {
         .output()
         .context("Failed to clear logcat buffer")?;
 
-    let pids: Option<Arc<Mutex<Vec<String>>>> = if let Some(package) = args.class_pattern.clone() {
+    let pids: Option<Arc<Mutex<Vec<String>>>> = if let Some(pattern) = args.class_pattern.clone() {
+        let regex = Regex::new(&pattern).context("Invalid class pattern")?;
         let pids = Arc::new(Mutex::new(Vec::<String>::new()));
         let pids_clone = pids.clone();
         let device_clone = device.clone();
         std::thread::spawn(move || {
             loop {
-                let output = Command::new("adb")
-                    .args(["-s", &device_clone, "shell", "pidof", &package])
-                    .output();
-                if let Ok(output) = output {
-                    let new_pids: Vec<String> = String::from_utf8_lossy(&output.stdout)
-                        .split_whitespace()
-                        .map(|s| s.to_string())
-                        .collect();
-                    *pids_clone.lock().unwrap() = new_pids;
-                }
+                let new_pids = get_matching_pids(&device_clone, &regex);
+                *pids_clone.lock().unwrap() = new_pids;
                 std::thread::sleep(std::time::Duration::from_secs(2));
             }
         });
